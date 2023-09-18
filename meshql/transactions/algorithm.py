@@ -1,7 +1,7 @@
 import gmsh
 from enum import Enum
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 from meshql.entity import Entity
 from meshql.transaction import SingleEntityTransaction, Transaction
 
@@ -27,6 +27,13 @@ MESH_ALGORITHM_3D_MAPPING = {
    "HXT": 10,
 }
 
+MESH_SUBDIVISION_ALGORITHM_MAPPING = {
+    "None": 0,
+    "AllQuadrangles": 1,
+    "AllHexahedra": 2,
+    "Barycentric": 3,
+}
+
 MeshAlgorithm2DType =  Literal[
     "MeshAdapt",
     "Automatic",
@@ -48,19 +55,24 @@ MeshAlgorithm3DType =  Literal[
     "HXT"
 ]
 
-@dataclass(eq=False)
-class SetMeshAlgorithm2D(SingleEntityTransaction):
-    entity: Entity
-    "Entity to set algorithm for"
+MeshSubdivisionType = Literal[
+    "None",
+    "AllQuadrangles",
+    "AllHexahedra",
+    "Barycentric",
+]
 
+@dataclass(eq=False)
+class SetMeshAlgorithm2D(Transaction):
     type: MeshAlgorithm2DType
     "algorithm to use"
 
-    per_face: bool = False
-    "if True, set algorithm per face, otherwise for whole system"
+    entity: Optional[Entity] = None
+    "Entity to set algorithm for"
+
 
     def before_gen(self):
-        if self.per_face:
+        if self.entity:
             assert self.entity.type == "face", "Can only set per face for edges"
             gmsh.model.mesh.setAlgorithm(self.entity.dim, self.entity.tag, MESH_ALGORITHM_2D_MAPPING[self.type])
         else:
@@ -75,4 +87,13 @@ class SetMeshAlgorithm3D(Transaction):
     def before_gen(self):
         algo_val = MESH_ALGORITHM_3D_MAPPING[self.type]
         gmsh.option.setNumber("Mesh.Algorithm3D", algo_val)
+
+@dataclass(eq=False)
+class SetSubdivisionAlgorithm(Transaction):
+    type: MeshSubdivisionType
+    "algorithm to use"
+
+    def before_gen(self):
+        algo_val = MESH_SUBDIVISION_ALGORITHM_MAPPING[self.type]
+        gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", algo_val)
 
