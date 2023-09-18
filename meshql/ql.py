@@ -7,7 +7,7 @@ from cadquery.selectors import Selector
 from meshql.entity import CQEntityContext, Entity
 from meshql.preprocessing.split import split_workplane
 from meshql.transaction import Transaction, TransactionContext
-from meshql.transactions.algorithm import MeshAlgorithm2DType, MeshAlgorithm3DType, SetMeshAlgorithm2D, SetMeshAlgorithm3D
+from meshql.transactions.algorithm import MeshAlgorithm2DType, MeshAlgorithm3DType, MeshSubdivisionType, SetMeshAlgorithm2D, SetMeshAlgorithm3D, SetSubdivisionAlgorithm
 from meshql.transactions.boundary_layer import UnstructuredBoundaryLayer, UnstructuredBoundaryLayer2D, get_boundary_ratio
 from meshql.transactions.physical_group import SetPhysicalGroup
 from meshql.transactions.refinement import Recombine, Refine, SetMeshSize, SetSmoothing
@@ -108,7 +108,7 @@ class GeometryQL:
         self._workplane = self._workplane.wires(selector, tag)
         return self
 
-    def vertices(self, selector: Selector | str | None = None, tag: str | None = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None):
+    def vertices(self, selector: Union[Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None):
         obj_type = type and self._type_groups[type]
         selector = CQExtensions.get_selector(selector, obj_type, indices)
         self._workplane = self._workplane.vertices(selector, tag)
@@ -174,13 +174,23 @@ class GeometryQL:
 
     def setMeshAlgorithm(self, type: MeshAlgorithm2DType, per_face: bool = False):
         faces = self._entity_ctx.select_many(self._workplane, "face")
-        set_algorithms = [SetMeshAlgorithm2D(face, type, per_face) for face in faces]
-        self._ctx.add_transactions(set_algorithms)
+        if per_face:
+            set_algorithms = [SetMeshAlgorithm2D(type, face) for face in faces]
+            self._ctx.add_transactions(set_algorithms)
+        else:
+            set_algorithm = SetMeshAlgorithm2D(type)
+            self._ctx.add_transaction(set_algorithm)
+        
         return self
 
     def setMeshAlgorithm3D(self, type: MeshAlgorithm3DType):
         set_algorithm3D = SetMeshAlgorithm3D(type)
         self._ctx.add_transaction(set_algorithm3D)
+        return self
+
+    def setSubdivisionAlgorithm(self, type: MeshSubdivisionType):
+        set_subdivision_algorithm = SetSubdivisionAlgorithm(type)
+        self._ctx.add_transaction(set_subdivision_algorithm)
         return self
 
     def smooth(self, num_smooths = 1):
