@@ -14,7 +14,7 @@ from meshql.utils.types import OrderedSet, NumpyFloat
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
-from jupyter_cadquery import show
+from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 
 CQType = Literal["compound", "solid", "shell", "face", "wire", "edge", "vertex"]
 CQGroupTypeString = Literal["split", "interior", "exterior"]
@@ -163,9 +163,8 @@ class CQLinq:
         assert sorted_paths[-1].end == sorted_paths[0].start, "Edges do not form a closed loop"
         return sorted_paths
     
-
     @staticmethod
-    def groupByTypes(target: Union[cq.Workplane, Sequence[CQObject]], only_faces=False, check_splits: bool = True, exclude_split: bool = False): 
+    def groupByTypes(target: Union[cq.Workplane, Sequence[CQObject]], only_faces=False, pre_split_workplane: Union[cq.Workplane, Sequence[CQObject], None] = None, split_faces: Optional[OrderedSet[Sequence[cq.Face]]] = None): 
         workplane = target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
 
         add_wire_to_group = lambda wires, group: group.update([
@@ -183,33 +182,49 @@ class CQLinq:
         is_2d = CQExtensions.get_dimension(workplane) == 2
         if is_2d:
             for face in faces:
+                assert isinstance(face, cq.Face), "object must be a face"
                 add_wire_to_group(face.innerWires(), groups["interior"])
                 add_wire_to_group([face.outerWire()], groups["exterior"])
         else:
-            for face in faces:
+            inner_edges = OrderedSet()
+            outer_edges = OrderedSet()
+
+            pre_split_workplane = pre_split_workplane or workplane
+            for face in pre_split_workplane.faces().vals():
                 assert isinstance(face, cq.Face), "object must be a face"
-                split_intersect = CQExtensions.split_intersect(workplane, face.Center(), cq.Edge.makeLine(face.Center(), face.Center() + (face.normalAt()*1E-5))) if check_splits else False
-                is_interior = CQExtensions.is_interior_face(face) 
-                if split_intersect:
-                    face_registry = groups["split"]
-                else:
-                    face_registry = groups["interior" if is_interior else "exterior"]
-                face_registry.add(face)
-                if not only_faces:
-                    add_wire_to_group(face.Wires(), face_registry)
+                for innerWire in face.innerWires():
+                    inner_edges.update([edge.centerOfMass(edge).toTuple() for edge in innerWire.Edges()])
+                outer_edges.update([edge.centerOfMass(edge).toTuple() for edge in face.outerWire().Edges()])
 
-        if exclude_split:
-            new_exterior = OrderedSet[CQObject]()
-            for obj in groups["exterior"]:
-                if obj not in groups["split"]:
-                    new_exterior.add(obj)
-            groups["exterior"] = new_exterior
 
-            new_interior = OrderedSet[CQObject]()
-            for obj in groups["interior"]:
-                if obj not in groups["split"]:
-                    new_interior.add(obj)
-            groups["interior"] = new_interior
+            for solid in workplane.solids().vals():
+                # maxDim = solid.BoundingBox().DiagonalLength * 10.0
+
+                for face in solid.Faces():
+                    # is_split = split_faces and face in split_faces
+                    is_split = False
+                    if split_faces:
+                        for split_face in split_faces:
+
+                            # nearest_center_gp_point = GeomAPI_ProjectPointOnSurf(face.Center().toPnt(), split_face._geomAdaptor()).NearestPoint()                
+                            if face.distance(split_face) == 0:
+                                is_split = True
+                                break
+
+                    if is_split:
+                        face_registry = groups["split"]
+                    else:
+                        is_interior = False
+                        for edge in face.outerWire().Edges():
+                            if edge.centerOfMass(edge).toTuple() in inner_edges:
+                                break
+                        
+                        face_registry = groups["interior" if is_interior else "exterior"]
+
+                    
+                    face_registry.add(face)
+                    if not only_faces:
+                        add_wire_to_group(face.Wires(), face_registry)
 
         return groups
 
@@ -239,15 +254,9 @@ class CQLinq:
             if where(cq_obj):
                 yield cq_obj
 
-class CQExtensions:
-    @staticmethod
-    def is_interior_face(face: CQObject, invert: bool = False):
-        assert isinstance(face, cq.Face), "object must be a face"
-        face_normal = face.normalAt()
-        face_centroid = face.Center()
-        interior_dot_product = face_normal.dot(face_centroid)
-        return (not invert and interior_dot_product < 0) or (invert and interior_dot_product >= 0)
 
+
+class CQExtensions:
     @staticmethod
     def find_nearest_point(workplane: cq.Workplane, near_point: cq.Vertex, tolerance: float = 1e-2) -> cq.Vertex:
         min_dist_vertex, min_dist = None, float("inf")
@@ -358,9 +367,7 @@ class CQExtensions:
             workplane = cq.Workplane().newObject(target)
         else:
             workplane = target
-
         return workplane
-
 
     @staticmethod
     def get_selector(selector: Union[cq.Selector, str, None], group: Optional[OrderedSet[CQObject]], indices: Optional[Sequence[int]] = None):
@@ -390,6 +397,12 @@ class CQExtensions:
             [0, 0, 0, 1]
         ])
         return shape.transformGeometry(t)
+
+    @staticmethod
+    def get_normalized_face_normal(face: cq.Face, center: Optional[cq.Vector] = None):
+        face_normal = face.normalAt(center)
+        return face_normal/face_normal.Length
+
 
 class CQCache:
     @staticmethod
@@ -433,8 +446,6 @@ class CQCache:
         if CACHE_DIR_NAME in os.listdir(TEMPDIR_PATH):
             for file in os.listdir(CACHE_DIR_PATH):
                 os.remove(os.path.join(CACHE_DIR_PATH, file))
-
-
 
 class IndexSelector(cq.Selector):
     def __init__(self, indices: Sequence[int]):

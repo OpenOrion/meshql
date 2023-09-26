@@ -5,7 +5,7 @@ from cadquery.cq import CQObject
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
 from cadquery.selectors import Selector
 from meshql.entity import CQEntityContext, Entity
-from meshql.preprocessing.split import split_workplane
+from meshql.preprocessing.split import Split
 from meshql.transaction import Transaction, TransactionContext
 from meshql.transactions.algorithm import MeshAlgorithm2DType, MeshAlgorithm3DType, MeshSubdivisionType, SetMeshAlgorithm2D, SetMeshAlgorithm3D, SetSubdivisionAlgorithm
 from meshql.transactions.boundary_layer import UnstructuredBoundaryLayer, UnstructuredBoundaryLayer2D, get_boundary_ratio
@@ -28,6 +28,8 @@ class GeometryQL:
         self._transfinite_edge_groups = list[set[cq.Edge]]()
     def __enter__(self):
         gmsh.initialize()
+        gmsh.option.set_number("General.ExpertMode", 1)
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -40,18 +42,21 @@ class GeometryQL:
             self._workplane = self._workplane.end(num)
         return self
 
-    def load(self, target: Union[cq.Workplane, str, Iterable[CQObject]], splits: Optional[Callable[[cq.Workplane], Sequence[cq.Face]]] = None, use_cache: bool = False):
+    def load(self, target: Union[cq.Workplane, str, Iterable[CQObject]], apply_splits: Optional[Callable[[Split], Split]] = None, use_cache: bool = False):
         assert self._workplane is None, "Workplane is already loaded."
 
-        workplane = self._initial_workplane = CQExtensions.import_workplane(target)
+        workplane = self._pre_split_workplane = CQExtensions.import_workplane(target)
         is_2d = CQExtensions.get_dimension(workplane) == 2
 
         # extrudes 2D shapes to 3D
         if is_2d:
             workplane = workplane.extrude(-1)
 
-        if splits:
-            workplane = split_workplane(workplane, splits(workplane), use_cache)
+        if apply_splits:
+            split = Split(workplane, use_cache)
+            workplane = apply_splits(split).curr_workplane
+        else:
+            split = None
 
 
         if is_2d:
@@ -62,7 +67,7 @@ class GeometryQL:
         else:
             self._initial_workplane = workplane
 
-        self._type_groups = CQLinq.groupByTypes(self._initial_workplane, exclude_split=is_2d)
+        self._type_groups = CQLinq.groupByTypes(self._initial_workplane, pre_split_workplane=self._pre_split_workplane, split_faces=(split and split.split_faces))
 
 
         self._workplane = self._initial_workplane
