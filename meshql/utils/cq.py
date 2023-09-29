@@ -14,6 +14,7 @@ from meshql.utils.types import OrderedSet, NumpyFloat
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
+from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 from jupyter_cadquery import show
 
 CQType = Literal["compound", "solid", "shell", "face", "wire", "edge", "vertex"]
@@ -164,8 +165,15 @@ class CQLinq:
         return sorted_paths
     
 
+
+
     @staticmethod
-    def groupByTypes(target: Union[cq.Workplane, Sequence[CQObject]], only_faces=False, check_splits: bool = True, exclude_split: bool = False): 
+    def groupByTypes(
+        target: Union[cq.Workplane, Sequence[CQObject]], 
+        only_faces=False, 
+        split_tol = 1E-5,
+        use_raycast: bool = True,
+    ): 
         workplane = target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
 
         add_wire_to_group = lambda wires, group: group.update([
@@ -181,35 +189,57 @@ class CQLinq:
         }
         faces = list(CQLinq.select(target, "face"))
         is_2d = CQExtensions.get_dimension(workplane) == 2
+
         if is_2d:
+            #TODO: transfer to 3D and back to 2D
             for face in faces:
+                assert isinstance(face, cq.Face), "object must be a face"
                 add_wire_to_group(face.innerWires(), groups["interior"])
                 add_wire_to_group([face.outerWire()], groups["exterior"])
         else:
-            for face in faces:
-                assert isinstance(face, cq.Face), "object must be a face"
-                split_intersect = CQExtensions.split_intersect(workplane, face.Center(), cq.Edge.makeLine(face.Center(), face.Center() + (face.normalAt()*1E-5))) if check_splits else False
-                is_interior = CQExtensions.is_interior_face(face) 
-                if split_intersect:
-                    face_registry = groups["split"]
-                else:
-                    face_registry = groups["interior" if is_interior else "exterior"]
-                face_registry.add(face)
-                if not only_faces:
-                    add_wire_to_group(face.Wires(), face_registry)
+            inner_edges = OrderedSet[tuple]()
 
-        if exclude_split:
-            new_exterior = OrderedSet[CQObject]()
-            for obj in groups["exterior"]:
-                if obj not in groups["split"]:
-                    new_exterior.add(obj)
-            groups["exterior"] = new_exterior
+            if not use_raycast:
+                for face in workplane.faces().vals():
+                    assert isinstance(face, cq.Face), "object must be a face"
+                    for innerWire in face.innerWires():
+                        inner_edges.update([edge.Center().toTuple() for edge in innerWire.Edges()])
 
-            new_interior = OrderedSet[CQObject]()
-            for obj in groups["interior"]:
-                if obj not in groups["split"]:
-                    new_interior.add(obj)
-            groups["interior"] = new_interior
+            for solid in workplane.solids().vals():
+                for face in solid.Faces():
+                    if use_raycast:
+                        maxDim = workplane.findSolid().BoundingBox().DiagonalLength
+                        nearest_center_gp_point = GeomAPI_ProjectPointOnSurf(face.Center().toPnt(), face._geomAdaptor()).NearestPoint()                
+                        face_center = cq.Vector(nearest_center_gp_point.X(), nearest_center_gp_point.Y(), nearest_center_gp_point.Z())
+                        face_normal = face.normalAt(face_center)
+                        normalized_face_normal = face_normal/face_normal.Length
+
+                        intersect_line = cq.Edge.makeLine(face_center, face_center + (normalized_face_normal*maxDim))
+                        intersected_vertices = workplane.intersect(cq.Workplane(intersect_line)).vertices().vals()
+
+                        is_interior = len(intersected_vertices) != 0
+                        is_split = is_interior and intersected_vertices[0].distance(face) < split_tol
+                    else:
+                        is_split = False
+
+                        # interior_dot_product = normalized_face_normal.dot(face_center)
+                        # is_interior = interior_dot_product <= 0
+
+                        is_interior = False
+                        for edge in face.outerWire().Edges():
+                            if edge.Center().toTuple() in inner_edges:
+                                is_interior = True
+                                break
+
+                    if is_split:
+                        face_registry = groups["split"]
+                    else:
+                        face_registry = groups["interior" if is_interior else "exterior"]
+
+                    
+                    face_registry.add(face)
+                    if not only_faces:
+                        add_wire_to_group(face.Wires(), face_registry)
 
         return groups
 
@@ -249,13 +279,16 @@ class CQExtensions:
         return (not invert and interior_dot_product < 0) or (invert and interior_dot_product >= 0)
 
     @staticmethod
-    def find_nearest_point(workplane: cq.Workplane, near_point: cq.Vertex, tolerance: float = 1e-2) -> cq.Vertex:
-        min_dist_vertex, min_dist = None, float("inf")
-        for vertex in workplane.vertices().vals():
-            dist = cast(cq.Vertex, vertex).distance(near_point)
-            if dist < min_dist and dist <= tolerance:
-                min_dist_vertex, min_dist = vertex, dist
-        return cast(cq.Vertex, min_dist_vertex)
+    def find_nearest(target: Union[cq.Workplane, CQObject, Sequence[CQObject]], near_shape: cq.Shape, tolerance: Optional[float] = None, excluded: Optional[Sequence[CQObject]] = None):
+        min_dist_shape, min_dist = None, float("inf")
+        for shape in CQLinq.select(target, CQ_TYPE_STR_MAPPING[type(near_shape)]):
+            if excluded and shape in excluded:
+                continue
+            dist =  (shape.Center() - near_shape.Center()).Length
+            if dist != 0 and dist < min_dist:
+                if (tolerance and dist <= tolerance) or not tolerance:
+                    min_dist_shape, min_dist = shape, dist
+        return cast(cq.Shape, min_dist_shape)
 
     @staticmethod
     def split_intersect(
@@ -277,7 +310,7 @@ class CQExtensions:
                     min_dist_vertex, min_dist = cast(cq.Vertex, vertex), intersect_dist
             
         if snap_tolerance and isinstance(min_dist_vertex, cq.Vertex):
-            nearest_point = CQExtensions.find_nearest_point(workplane, min_dist_vertex, snap_tolerance)
+            nearest_point = CQExtensions.find_nearest(workplane, min_dist_vertex, "vertex", snap_tolerance)
             if nearest_point:
                 return nearest_point
         return min_dist_vertex
