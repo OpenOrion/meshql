@@ -10,7 +10,7 @@ from typing import Callable, Iterable, Literal, Optional, Sequence, TypeVar, Uni
 import numpy as np
 from meshql.utils.plot import add_plot
 from meshql.utils.shapes import get_sampling
-from meshql.utils.types import OrderedSet, NumpyFloat
+from meshql.utils.types import OrderedSet, NumpyFloat, VectorSequence, to_vec
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
@@ -245,8 +245,8 @@ class CQLinq:
 
 
     @staticmethod
-    def groupBy(target: Union[cq.Workplane, Sequence[CQObject]], parent_type: CQType, child_type: CQType): 
-        groups: dict[CQObject, set[CQObject]] = {}
+    def groupBy(target: Union[cq.Workplane, Iterable[CQObject]], parent_type: CQType, child_type: CQType): 
+        groups: dict[CQObject, OrderedSet[CQObject]] = {}
         
         cq_objs = target.vals() if isinstance(target, cq.Workplane) else (target if isinstance(target, Iterable) else [target])
         for cq_obj in cq_objs:
@@ -255,7 +255,7 @@ class CQLinq:
                 children = CQLinq.select(parent, child_type)
                 for child in children:
                     if child not in groups:
-                        groups[child] = set[CQObject]()
+                        groups[child] = OrderedSet[CQObject]()
                     groups[child].add(parent)
         return groups
 
@@ -293,7 +293,7 @@ class CQExtensions:
     @staticmethod
     def split_intersect(
         workplane: cq.Workplane, 
-        anchor: VectorLike, 
+        anchor: Union[cq.Vector, VectorSequence], 
         splitter: CQObject, 
         snap_tolerance: Optional[float] = None,
     ) -> Optional[cq.Vertex]:
@@ -305,7 +305,7 @@ class CQExtensions:
         intersected_vertices = OrderedSet(CQLinq.select(intersected_edges, "vertex"))
         min_dist_vertex, min_dist = None, float("inf") 
         for vertex in intersected_vertices:
-                intersect_dist = (cq.Vector(vertex.X, vertex.Y, vertex.Z) - cq.Vector(anchor)).Length
+                intersect_dist = (cq.Vector(vertex.X, vertex.Y, vertex.Z) - to_vec(anchor)).Length
                 if intersect_dist !=0 and intersect_dist < min_dist:
                     min_dist_vertex, min_dist = cast(cq.Vertex, vertex), intersect_dist
             
@@ -396,25 +396,6 @@ class CQExtensions:
 
 
     @staticmethod
-    def get_selector(selector: Union[cq.Selector, str, None], group: Optional[OrderedSet[CQObject]], indices: Optional[Sequence[int]] = None):
-        selectors = []
-        if isinstance(selector, str):
-            selector = selectors.append(cq.StringSyntaxSelector(selector))
-        elif isinstance(selector, cq.Selector):
-            selectors.append(selector)
-
-        if group is not None:
-            selectors.append(GroupSelector(group))
-        if indices is not None:
-            selectors.append(IndexSelector(indices))
-
-        if len(selectors) > 0:
-            prev_selector = selectors[0]
-            for selector in selectors[1:]:
-                prev_selector = cq.selectors.AndSelector(prev_selector, selector)
-            return prev_selector
-
-    @staticmethod
     def scale(shape: TShape, x: float = 1, y: float = 1, z: float = 1) -> TShape:
         t = cq.Matrix([
             [x, 0, 0, 0],
@@ -468,21 +449,26 @@ class CQCache:
                 os.remove(os.path.join(CACHE_DIR_PATH, file))
 
 
-
 class IndexSelector(cq.Selector):
     def __init__(self, indices: Sequence[int]):
         self.indices = indices
     def filter(self, objectList):
         return [objectList[i] for i in self.indices]
 
+FilterExpression = Optional[Callable[[CQObject], bool]]
+class FilterSelector(cq.Selector):
+    def __init__(self, objFilter: FilterExpression):
+        self.objFilter = objFilter
+    def filter(self, objectList):
+        return list(filter(self.objFilter, objectList))
+
+
 class GroupSelector(cq.Selector):
-    def __init__(self, allow: OrderedSet[CQObject], is_interior: bool = True):
+    def __init__(self, allow: OrderedSet[CQObject]):
         self.allow = allow
-        self.is_interior = is_interior
     def filter(self, objectList):
         filtered_objs = []
         for obj in objectList:
             if obj in self.allow:
                 filtered_objs.append(obj)
         return filtered_objs
-

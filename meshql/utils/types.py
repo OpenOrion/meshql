@@ -1,10 +1,36 @@
-from typing import Iterable, Iterator, MutableSet, TypeVar, Union
+from typing import Iterable, Iterator, Literal, MutableSet, TypeVar, Union
 import numpy as np
-
+import cadquery as cq
 NumpyFloat = np.float32
 Number = Union[int, float, NumpyFloat]
-VectorTuple = Union[tuple[float, float, float], tuple[float, float]]
-LineTuple = tuple[VectorTuple, VectorTuple]
+VectorSequence = Union[tuple[Number, Number, Number], tuple[Number, Number], np.ndarray]
+LineTuple = tuple[VectorSequence, VectorSequence]
+Axis = Union[Literal["X", "Y", "Z"], VectorSequence, cq.Vector]
+
+def to_array(vecs: Iterable[VectorSequence]):
+    array = []
+    for vec in vecs:
+        if isinstance(vec, np.ndarray):
+            array.append(vec)
+        elif isinstance(vec, tuple):
+            array.append(vec if len(vec) == 3 else (*vec, 0))
+        elif isinstance(vec, cq.Vector):
+            array.append(vec.toTuple())
+    return np.array(array)
+
+def to_vec(axis: Axis, normalize: bool = False):
+    if isinstance(axis, str):
+        vec = cq.Vector([1 if axis == "X" else 0, 1 if axis == "Y" else 0, 1 if axis == "Z" else 0])        
+    elif isinstance(axis, tuple):
+        vec = cq.Vector(axis)
+    elif isinstance(axis, np.ndarray):
+        vec = cq.Vector(tuple(axis))
+    else:
+        vec = axis
+    if normalize:
+        return vec / vec.Length
+    return vec
+
 
 T = TypeVar("T")
 class OrderedSet(MutableSet[T]):

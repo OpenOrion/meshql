@@ -3,9 +3,8 @@ import numpy as np
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
-from cadquery.selectors import Selector
 from meshql.entity import CQEntityContext, Entity
-from meshql.preprocessing.split import Split
+from meshql.preprocessing.split import Split, SplitAt
 from meshql.transaction import Transaction, TransactionContext
 from meshql.transactions.algorithm import MeshAlgorithm2DType, MeshAlgorithm3DType, MeshSubdivisionType, SetMeshAlgorithm2D, SetMeshAlgorithm3D, SetSubdivisionAlgorithm
 from meshql.transactions.boundary_layer import UnstructuredBoundaryLayer, UnstructuredBoundaryLayer2D, get_boundary_ratio
@@ -14,18 +13,20 @@ from meshql.transactions.refinement import Recombine, Refine, SetMeshSize, SetSm
 from meshql.transactions.transfinite import SetTransfiniteEdge, SetTransfiniteFace, SetTransfiniteSolid, TransfiniteArrangementType, TransfiniteMeshType
 from meshql.mesh.exporters import export_to_su2
 from meshql.utils.cq import CQ_TYPE_RANKING, CQ_TYPE_STR_MAPPING, CQExtensions, CQGroupTypeString, CQLinq, CQType
+from meshql.selector import SelectorQuerier
 from meshql.utils.types import OrderedSet
 from meshql.visualizer import visualize_mesh
 from jupyter_cadquery import show
 
-class GeometryQL:
-    _workplane: cq.Workplane
+class GeometryQL(SelectorQuerier):
     _initial_workplane: cq.Workplane
-    def __init__(self) -> None:
-        self._initial_workplane = self._workplane = None # type: ignore
+    def __init__(self, use_cache: bool = False, split_at: SplitAt = "end") -> None:
+        self.use_cache = use_cache
+        self.split_at = split_at
         self._ctx = TransactionContext()
         self.is_structured = False
         self._transfinite_edge_groups = list[set[cq.Edge]]()
+
     def __enter__(self):
         gmsh.initialize()
         gmsh.option.set_number("General.ExpertMode", 1)
@@ -37,124 +38,72 @@ class GeometryQL:
 
     def end(self, num: Optional[int] = None):
         if num is None:
-            self._workplane = self._initial_workplane
+            self.workplane = self._initial_workplane
         else:
-            self._workplane = self._workplane.end(num)
+            self.workplane = self.workplane.end(num)
         return self
 
     def load(
             self, 
             target: Union[cq.Workplane, str, Iterable[CQObject]], 
-            on_split: Optional[Callable[[Split], Split]] = None, 
-            use_cache: bool = False,
+            on_split: Optional[Callable[[Split], Split]] = None,
             use_raycast:Optional[bool] = None
         ):
-        assert self._workplane is None, "Workplane is already loaded."
-
-        workplane = self._initial_workplane = CQExtensions.import_workplane(target)
-        is_2d = CQExtensions.get_dimension(workplane) == 2
-
+        workplane = CQExtensions.import_workplane(target)
         # extrudes 2D shapes to 3D
+        is_2d = CQExtensions.get_dimension(workplane) == 2
         if is_2d:
             workplane = workplane.extrude(-1)
 
         if on_split:
-            split = Split(workplane, use_cache)
-            workplane = on_split(split).curr_workplane
-        else:
-            split = None
-
+            split = Split(workplane, cast(SplitAt, self.split_at), self.use_cache)
+            workplane = on_split(split).finalize().workplane
 
         if is_2d:
             # fuses top faces to appear as one Compound in GMSH
             faces = cast(Sequence[cq.Face], workplane.faces(">Z").vals())
             fused_face = CQExtensions.fuse_shapes(faces)
-            self._initial_workplane = cq.Workplane(fused_face)
-        else:
-            self._initial_workplane = workplane
+            workplane = cq.Workplane(fused_face)
+        
+        self._initial_workplane = workplane
+        use_raycast = use_raycast or on_split is not None
+
+        super().__init__(self._initial_workplane, use_raycast=use_raycast)
 
 
-        if use_raycast is None:
-            use_raycast = split is not None
-
-        # self._type_groups = CQLinq.groupByTypes(self._initial_workplane, use_raycast=use_raycast)
-        # self._type_groups = CQLinq.groupByTypes(self._initial_workplane, exclude_split=is_2d)
-
-
-        self._workplane = self._initial_workplane
-        topods = self._workplane.toOCC()
+        topods = self._initial_workplane.toOCC()
         gmsh.model.occ.importShapesNativePointer(topods._address())
         gmsh.model.occ.synchronize()
 
-        self._entity_ctx = CQEntityContext(self._workplane)
-
+        self._entity_ctx = CQEntityContext(self._initial_workplane)
         self._tag_workplane()
+
 
         return self    
     
-
     def _tag_workplane(self):
         "Tag all gmsh entity tags to workplane"
         for cq_type, registry in self._entity_ctx.entity_registries.items():
             for occ_obj in registry.keys():
                 tag = f"{cq_type}/{registry[occ_obj].tag}"
-                self._workplane.newObject([occ_obj]).tag(tag)
-
-    def solids(self, selector: Union[Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None):
-        obj_type = type and self._type_groups[type]
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.solids(selector, tag)
-        return self
-
-    def faces(self, selector: Union[Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None):
-        obj_type = type and self._type_groups[type]
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.faces(selector, tag)
-        return self
-    
-    def edges(self, selector: Union[Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None):
-        obj_type = type and self._type_groups[type]
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.edges(selector, tag)
-        return self
-
-    def wires(self, selector: Union[Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None):
-        obj_type = type and self._type_groups[type]
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.wires(selector, tag)
-        return self
-
-    def vertices(self, selector: Union[Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None):
-        obj_type = type and self._type_groups[type]
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.vertices(selector, tag)
+                self.workplane.newObject([occ_obj]).tag(tag)
         return self
 
     def vals(self):
-        return self._entity_ctx.select_many(self._workplane)
+        return self._entity_ctx.select_many(self.workplane)
 
     def val(self):
-        return self._entity_ctx.select(self._workplane.val())
+        return self._entity_ctx.select(self.workplane.val())
 
 
     def tag(self, names: Union[str, Sequence[str]]):
         if isinstance(names, str):
-            self._workplane.tag(names)
+            self.workplane.tag(names)
         else:
-            for i, cq_obj in enumerate(self._workplane.vals()):
-                self._workplane.newObject([cq_obj]).tag(names[i])
+            for i, cq_obj in enumerate(self.workplane.vals()):
+                self.workplane.newObject([cq_obj]).tag(names[i])
         return self
 
-    def fromTagged(self, tags: Union[str, Iterable[str]], resolve_type: Optional[CQType] = None, invert: bool = True):        
-        if isinstance(tags, str) and resolve_type is None:
-            self._workplane = self._workplane._getTagged(tags)
-        else:
-            tagged_objs = list(CQLinq.select_tagged(self._workplane, tags, resolve_type))
-            tagged_cq_type = CQ_TYPE_STR_MAPPING[type(tagged_objs[0])]
-            workplane_objs = CQLinq.select(self._workplane, tagged_cq_type)
-            filtered_objs = CQLinq.filter(workplane_objs, tagged_objs, invert)
-            self._workplane = self._workplane.newObject(filtered_objs)
-        return self
 
     def addPhysicalGroup(self, group: Union[str, Sequence[str]]):
         if  isinstance(group, str):
@@ -177,19 +126,19 @@ class GeometryQL:
         return self
 
     def recombine(self, angle: float = 45):
-        faces = self._entity_ctx.select_many(self._workplane, "face")
+        faces = self._entity_ctx.select_many(self.workplane, "face")
         recombines = [Recombine(face, angle) for face in faces]
         self._ctx.add_transactions(recombines)
         return self
 
     def setMeshSize(self, size: Union[float, Callable[[float,float,float], float]]):
-        points = self._entity_ctx.select_many(self._workplane, "vertex")
+        points = self._entity_ctx.select_many(self.workplane, "vertex")
         set_size = SetMeshSize(points, size)
         self._ctx.add_transaction(set_size)
         return self
 
     def setMeshAlgorithm(self, type: MeshAlgorithm2DType, per_face: bool = False):
-        faces = self._entity_ctx.select_many(self._workplane, "face")
+        faces = self._entity_ctx.select_many(self.workplane, "face")
         if per_face:
             set_algorithms = [SetMeshAlgorithm2D(type, face) for face in faces]
             self._ctx.add_transactions(set_algorithms)
@@ -210,7 +159,7 @@ class GeometryQL:
         return self
 
     def smooth(self, num_smooths = 1):
-        faces = self._entity_ctx.select_many(self._workplane)
+        faces = self._entity_ctx.select_many(self.workplane)
         set_smoothings = [SetSmoothing(face, num_smooths) for face in faces]
         self._ctx.add_transactions(set_smoothings)
         return self
@@ -221,7 +170,7 @@ class GeometryQL:
         return self
 
     def setTransfiniteEdge(self, num_nodes: Optional[Union[Sequence[int], int]] = None, mesh_type: Optional[Union[TransfiniteMeshType, Sequence[TransfiniteMeshType]]] = None, coef: Optional[Union[float, Sequence[float]]] = None):
-        edge_batch = self._entity_ctx.select_batch(self._workplane, "face", "edge")
+        edge_batch = self._entity_ctx.select_batch(self.workplane, "face", "edge")
         for edges in edge_batch:
             for i, edge in enumerate(edges):
                 transaction = cast(SetTransfiniteEdge, self._ctx.get_transaction(SetTransfiniteEdge, edge))
@@ -248,7 +197,7 @@ class GeometryQL:
 
     def setTransfiniteFace(self, arrangement: TransfiniteArrangementType = "Left"):
         self.is_structured = True    
-        cq_face_batch = CQLinq.select_batch(self._workplane, "solid", "face")
+        cq_face_batch = CQLinq.select_batch(self.workplane, "solid", "face")
         for i, cq_faces in enumerate(cq_face_batch):
             faces = self._entity_ctx.select_many(cq_faces)
             set_transfinite_faces = [SetTransfiniteFace(face, arrangement) for face in faces]
@@ -258,7 +207,7 @@ class GeometryQL:
 
     def setTransfiniteSolid(self):
         self.is_structured = True    
-        solids = self._entity_ctx.select_many(self._workplane, "solid")
+        solids = self._entity_ctx.select_many(self.workplane, "solid")
         set_transfinite_solids = [SetTransfiniteSolid(solid) for solid in solids]
         self._ctx.add_transactions(set_transfinite_solids)
         return self
@@ -267,6 +216,7 @@ class GeometryQL:
         transfinite_edge_groups: list[set[cq.Edge]] = []
         for cq_face in cq_faces:
             sorted_edges = CQLinq.sort(cq_face.Edges())
+            # TODO: add support for 3 sided faces
             for i, path in enumerate(sorted_edges):
                 cq_edge = path.edge
                 parllel_edge_index = (i+2 if i+2 < len(sorted_edges) else (i+2) - len(sorted_edges))
@@ -330,16 +280,16 @@ class GeometryQL:
         auto_recombine: bool = True
     ):
         self.is_structured = True
-        if CQExtensions.get_dimension(self._workplane) == 2:
-            cq_faces = cast(Sequence[cq.Face], list(CQLinq.select(self._workplane, "face")))
+        if CQExtensions.get_dimension(self.workplane) == 2:
+            cq_faces = cast(Sequence[cq.Face], list(CQLinq.select(self.workplane, "face")))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
 
         else:
-            for cq_solid in cast(Sequence[cq.Solid], CQLinq.select(self._workplane, "solid")):
+            for cq_solid in cast(Sequence[cq.Solid], CQLinq.select(self.workplane, "solid")):
                 solid = self._entity_ctx.select(cq_solid)
                 set_transfinite_solid = SetTransfiniteSolid(solid)
                 self._ctx.add_transaction(set_transfinite_solid)
-            cq_faces = cast(Sequence[cq.Face], list(CQLinq.select(self._workplane, "face")))
+            cq_faces = cast(Sequence[cq.Face], list(CQLinq.select(self.workplane, "face")))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
 
         # transfinite_auto = SetTransfiniteAuto()
@@ -380,11 +330,11 @@ class GeometryQL:
 
     def addBoundaryLayer(self, size: float, ratio: Optional[float] = None, num_layers: Optional[int] = None, auto_recombine: bool = True):
         if self.is_structured:
-            self._addStructuredBoundaryLayer(self._workplane.vals(), size, ratio)
+            self._addStructuredBoundaryLayer(self.workplane.vals(), size, ratio)
         else:
             ratio = ratio or 1.0
             assert num_layers is not None and size is not None and ratio is not None, "num_layers, hwall_n and ratio must be specified for unstructured boundary layer"
-            if CQ_TYPE_RANKING[type(self._workplane.val())] < CQ_TYPE_RANKING[cq.Face]:
+            if CQ_TYPE_RANKING[type(self.workplane.val())] < CQ_TYPE_RANKING[cq.Face]:
                 boundary_layer = UnstructuredBoundaryLayer2D(self.vals(), ratio, size, num_layers)
             else:
                 boundary_layer = UnstructuredBoundaryLayer(self.vals(), ratio, size, num_layers)
@@ -401,7 +351,7 @@ class GeometryQL:
         if filename.endswith(".su2"):
             export_to_su2(self._ctx.mesh, filename)
         elif filename.endswith(".step"):
-            cq.exporters.export(self._workplane, filename)
+            cq.exporters.export(self.workplane, filename)
         else:
             gmsh.write(filename)
         return self
@@ -410,19 +360,26 @@ class GeometryQL:
         assert self.is_structured, "Structured boundary layer can only be applied after setTransfiniteAuto"
         assert group_index < len(self._transfinite_edge_groups), f"Group index {group_index} is out of range"
         group = self._transfinite_edge_groups[group_index]
-        show(self._workplane.newObject(group), theme="dark")
+        show(self.workplane.newObject(group), theme="dark")
         return self
 
-    def show(self, type: Literal["gmsh", "mesh", "cq", "plot"] = "cq", only_markers: bool = False):
+    def show(self, type: Literal["gmsh", "mesh", "cq", "plot"] = "cq", theme: Literal["light", "dark"]="light", only_markers: bool = False):
         if type == "gmsh":
+            is_dark = theme == "dark"
+            background_color = 0 if is_dark else 255
+            gmsh.option.set_number("General.FltkColorScheme", is_dark)
+            gmsh.option.set_color("General.Color.Background", background_color, background_color, background_color) 
+            gmsh.option.set_color("General.Color.Foreground", background_color, background_color, background_color) 
+            gmsh.option.set_color("General.Color.BackgroundGradient", background_color, background_color, background_color) 
+
             gmsh.fltk.run()
         elif type == "mesh":
             assert self._ctx.mesh is not None, "Mesh is not generated yet."
             visualize_mesh(self._ctx.mesh, only_markers=only_markers)
         elif type == "plot":
-            CQExtensions.plot_cq(self._workplane, ctx=self._entity_ctx)
+            CQExtensions.plot_cq(self.workplane, ctx=self._entity_ctx)
         elif type == "cq":
-            show(self._workplane, theme="dark")
+            show(self.workplane, theme=theme)
         else:
             raise NotImplementedError(f"Unknown show type {type}")
         return self
