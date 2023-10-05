@@ -13,13 +13,12 @@ from meshql.transactions.refinement import Recombine, Refine, SetMeshSize, SetSm
 from meshql.transactions.transfinite import SetTransfiniteEdge, SetTransfiniteFace, SetTransfiniteSolid, TransfiniteArrangementType, TransfiniteMeshType
 from meshql.mesh.exporters import export_to_su2
 from meshql.utils.cq import CQ_TYPE_RANKING, CQ_TYPE_STR_MAPPING, CQExtensions, CQGroupTypeString, CQLinq, CQType
-from meshql.selector import SelectorQuerier
+from meshql.selector import WorkplaneSelectable
 from meshql.utils.types import OrderedSet
 from meshql.visualizer import visualize_mesh
 from jupyter_cadquery import show
 
-class GeometryQL(SelectorQuerier):
-    _initial_workplane: cq.Workplane
+class GeometryQL(WorkplaneSelectable):
     def __init__(self, use_cache: bool = False, split_at: SplitAt = "end") -> None:
         self.use_cache = use_cache
         self.split_at = split_at
@@ -36,12 +35,6 @@ class GeometryQL(SelectorQuerier):
     def __exit__(self, exc_type, exc_val, exc_tb):
         gmsh.finalize()
 
-    def end(self, num: Optional[int] = None):
-        if num is None:
-            self.workplane = self._initial_workplane
-        else:
-            self.workplane = self.workplane.end(num)
-        return self
 
     def load(
             self, 
@@ -65,17 +58,16 @@ class GeometryQL(SelectorQuerier):
             fused_face = CQExtensions.fuse_shapes(faces)
             workplane = cq.Workplane(fused_face)
         
-        self._initial_workplane = workplane
         use_raycast = use_raycast or on_split is not None
 
-        super().__init__(self._initial_workplane, use_raycast=use_raycast)
+        super().__init__(workplane, use_raycast=use_raycast)
 
 
-        topods = self._initial_workplane.toOCC()
+        topods = workplane.toOCC()
         gmsh.model.occ.importShapesNativePointer(topods._address())
         gmsh.model.occ.synchronize()
 
-        self._entity_ctx = CQEntityContext(self._initial_workplane)
+        self._entity_ctx = CQEntityContext(workplane)
         self._tag_workplane()
 
 

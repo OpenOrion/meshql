@@ -4,19 +4,20 @@ import cadquery as cq
 NumpyFloat = np.float32
 Number = Union[int, float, NumpyFloat]
 VectorSequence = Union[tuple[Number, Number, Number], tuple[Number, Number], np.ndarray]
+VectorLike = Union[VectorSequence, cq.Vector]
 LineTuple = tuple[VectorSequence, VectorSequence]
 Axis = Union[Literal["X", "Y", "Z"], VectorSequence, cq.Vector]
 
-def to_array(vecs: Iterable[VectorSequence]):
-    array = []
-    for vec in vecs:
-        if isinstance(vec, np.ndarray):
-            array.append(vec)
-        elif isinstance(vec, tuple):
-            array.append(vec if len(vec) == 3 else (*vec, 0))
-        elif isinstance(vec, cq.Vector):
-            array.append(vec.toTuple())
-    return np.array(array)
+def to_array(vec: VectorLike):
+    if isinstance(vec, np.ndarray):
+        return vec
+    elif isinstance(vec, tuple):
+        return np.array(vec if len(vec) == 3 else (*vec, 0))
+    elif isinstance(vec, cq.Vector):
+        return np.array(vec.toTuple())
+
+def to_2d_array(vecs: Iterable[VectorLike]):
+    return [to_array(vec) for vec in vecs]
 
 def to_vec(axis: Axis, normalize: bool = False):
     if isinstance(axis, str):

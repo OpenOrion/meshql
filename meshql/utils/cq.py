@@ -90,7 +90,7 @@ class CQLinq:
 
     @staticmethod
     def select(target: Union[cq.Workplane, Iterable[CQObject], CQObject], select_type: Optional[CQType] = None):
-        cq_objs = target.vals() if isinstance(target, cq.Workplane) else (list(target) if isinstance(target, Iterable) else [target])
+        cq_objs = target.vals() if isinstance(target, cq.Workplane) else ([target] if isinstance(target, CQObject) else list(target))
         
         if type is None or len(cq_objs) > 0 and CQ_TYPE_STR_MAPPING[type(cq_objs[0])] == select_type:
             yield from cq_objs
@@ -172,6 +172,7 @@ class CQLinq:
         target: Union[cq.Workplane, Sequence[CQObject]], 
         only_faces=False, 
         split_tol = 1E-5,
+        is_exclusive: bool = False,
         use_raycast: bool = True,
     ): 
         workplane = target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
@@ -221,10 +222,6 @@ class CQLinq:
                         is_split = is_interior and intersected_vertices[0].distance(face) < split_tol
                     else:
                         is_split = False
-
-                        # interior_dot_product = normalized_face_normal.dot(face_center)
-                        # is_interior = interior_dot_product <= 0
-
                         is_interior = False
                         for edge in face.outerWire().Edges():
                             if edge.Center().toTuple() in inner_edges:
@@ -240,6 +237,10 @@ class CQLinq:
                     face_registry.add(face)
                     if not only_faces:
                         add_wire_to_group(face.Wires(), face_registry)
+
+
+        if is_exclusive:
+            groups["interior"] -= groups["exterior"]
 
         return groups
 

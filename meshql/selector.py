@@ -4,69 +4,76 @@ from meshql.utils.cq import CQ_TYPE_STR_MAPPING, CQGroupTypeString, CQLinq, CQTy
 from meshql.utils.types import OrderedSet
 from cadquery.cq import CQObject
 
-class Selector:
-    @staticmethod
-    def create(
-        selector: Optional[Union[cq.Selector, str, None]] = None, 
-        group: Optional[OrderedSet[CQObject]] = None, 
-        indices: Optional[Sequence[int]] = None, 
-        filter: Optional[Callable[[CQObject], bool]] = None
-    ):
-        selectors = []
-        if isinstance(selector, str):
-            selector = selectors.append(cq.StringSyntaxSelector(selector))
-        elif isinstance(selector, cq.Selector):
-            selectors.append(selector)
+    
+def to_selector(
+    selector: Optional[Union[cq.Selector, str, None]] = None,
+    group: Optional[OrderedSet[CQObject]] = None, 
+    indices: Optional[Sequence[int]] = None,
+    filter: Optional[Callable[[CQObject], bool]] = None
+):
+    selectors = []
+    if isinstance(selector, str):
+        selector = selectors.append(cq.StringSyntaxSelector(selector))
+    elif isinstance(selector, cq.Selector):
+        selectors.append(selector)
+    
+    if group is not None:
+        selectors.append(GroupSelector(group))
+    if indices is not None:
+        selectors.append(IndexSelector(indices))
+    if filter is not None:
+        selectors.append(FilterSelector(filter))
 
-        if group is not None:
-            selectors.append(GroupSelector(group))
-        if indices is not None:
-            selectors.append(IndexSelector(indices))
-        if filter is not None:
-            selectors.append(FilterSelector(filter))
-
-        if len(selectors) > 0:
-            prev_selector = selectors[0]
-            for selector in selectors[1:]:
-                prev_selector = cq.selectors.AndSelector(prev_selector, selector)
-            return prev_selector
-        raise ValueError("No selector provided")
-
+    if len(selectors) > 0:
+        prev_selector = selectors[0]
+        for selector in selectors[1:]:
+            prev_selector = cq.selectors.AndSelector(prev_selector, selector)
+        return prev_selector
+    return None
 
 
-class SelectorQuerier:
+
+class WorkplaneSelectable:
     workplane: cq.Workplane
-    def __init__(self, workplane: cq.Workplane, only_faces: bool = False, use_raycast: bool = False) -> None:
+    def __init__(self, workplane: cq.Workplane, only_faces: bool = False, is_exclusive: bool = False, use_raycast: bool = False) -> None:
         self.workplane = workplane
-        self.type_groups = CQLinq.groupByTypes(self.workplane, only_faces=only_faces, use_raycast=use_raycast)
+        self.initial_workplane = workplane
+        self.type_groups = CQLinq.groupByTypes(self.workplane, only_faces=only_faces, use_raycast=use_raycast, is_exclusive=is_exclusive)
+
+    def end(self, num: Optional[int] = None):
+        if num is None:
+            self.workplane = self.initial_workplane
+        else:
+            self.workplane = self.workplane.end(num)
+        return self
 
     def solids(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        obj_type = type and self.type_groups[type]
-        selector = Selector.create(selector, obj_type, indices, filter)
+        type_group = type and self.type_groups[type]
+        selector = to_selector(selector, type_group, indices, filter)
         self.workplane = self.workplane.solids(selector, tag)
         return self
 
     def faces(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        obj_type = type and self.type_groups[type]
-        selector = Selector.create(selector, obj_type, indices, filter)
+        type_group = type and self.type_groups[type]
+        selector = to_selector(selector, type_group, indices, filter)
         self.workplane = self.workplane.faces(selector, tag)
         return self
     
     def edges(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        obj_type = type and self.type_groups[type]
-        selector = Selector.create(selector, obj_type, indices, filter)
+        type_group = type and self.type_groups[type]
+        selector = to_selector(selector, type_group, indices, filter)
         self.workplane = self.workplane.edges(selector, tag)
         return self
 
     def wires(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        obj_type = type and self.type_groups[type]
-        selector = Selector.create(selector, obj_type, indices, filter)
+        type_group = type and self.type_groups[type]
+        selector = to_selector(selector, type_group, indices, filter)
         self.workplane = self.workplane.wires(selector, tag)
         return self
 
     def vertices(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        obj_type = type and self.type_groups[type]
-        selector = Selector.create(selector, obj_type, indices, filter)
+        type_group = type and self.type_groups[type]
+        selector = to_selector(selector, type_group, indices, filter)
         self.workplane = self.workplane.vertices(selector, tag)
         return self
 
