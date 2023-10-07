@@ -60,7 +60,7 @@ class GeometryQL(WorkplaneSelectable):
         
         use_raycast = use_raycast or on_split is not None
 
-        super().__init__(workplane, use_raycast=use_raycast)
+        super().__init__(workplane)
 
 
         topods = workplane.toOCC()
@@ -207,7 +207,7 @@ class GeometryQL(WorkplaneSelectable):
     def _getTransfiniteEdgeGroups(self, cq_faces: Sequence[cq.Face]):
         transfinite_edge_groups: list[set[cq.Edge]] = []
         for cq_face in cq_faces:
-            sorted_edges = CQLinq.sort(cq_face.Edges())
+            sorted_edges = CQLinq.sortByConnect(cq_face.Edges())
             # TODO: add support for 3 sided faces
             for i, path in enumerate(sorted_edges):
                 cq_edge = path.edge
@@ -233,11 +233,13 @@ class GeometryQL(WorkplaneSelectable):
 
     def _setTransfiniteFaceAuto(
         self, 
-        cq_faces: Sequence[cq.Face], 
+        cq_faces: Sequence[CQObject], 
         max_nodes: int, 
         min_nodes: int = 1,
         arrangement: TransfiniteArrangementType = "Left"
     ):
+        assert isinstance(cq_faces[0], cq.Face), "cq_faces must be a list of faces"
+        cq_faces = cast(Sequence[cq.Face], cq_faces)
         self.is_structured = True    
         for cq_face in cq_faces:
             face = self._entity_ctx.select(cq_face)
@@ -273,7 +275,7 @@ class GeometryQL(WorkplaneSelectable):
     ):
         self.is_structured = True
         if CQExtensions.get_dimension(self.workplane) == 2:
-            cq_faces = cast(Sequence[cq.Face], list(CQLinq.select(self.workplane, "face")))
+            cq_faces = list(CQLinq.select(self.workplane, "face"))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
 
         else:
@@ -281,7 +283,7 @@ class GeometryQL(WorkplaneSelectable):
                 solid = self._entity_ctx.select(cq_solid)
                 set_transfinite_solid = SetTransfiniteSolid(solid)
                 self._ctx.add_transaction(set_transfinite_solid)
-            cq_faces = cast(Sequence[cq.Face], list(CQLinq.select(self.workplane, "face")))
+            cq_faces = list(CQLinq.select(self.workplane, "face"))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
 
         # transfinite_auto = SetTransfiniteAuto()

@@ -1,44 +1,58 @@
-from typing import Callable, Iterable, Optional, Sequence, Union
+from dataclasses import dataclass
+from typing import Callable, Iterable, Optional, Sequence, Union, cast
 import cadquery as cq
 from meshql.utils.cq import CQ_TYPE_STR_MAPPING, CQGroupTypeString, CQLinq, CQType, FilterSelector, GroupSelector, IndexSelector
 from meshql.utils.types import OrderedSet
 from cadquery.cq import CQObject
 
     
-def to_selector(
-    selector: Optional[Union[cq.Selector, str, None]] = None,
-    group: Optional[OrderedSet[CQObject]] = None, 
-    indices: Optional[Sequence[int]] = None,
+@dataclass
+class Selection:
+    selector: Union[cq.Selector, str, None] = None
+    tag: Union[str, None] = None
+    type: Optional[CQGroupTypeString] = None
+    indices: Optional[Sequence[int]] = None 
     filter: Optional[Callable[[CQObject], bool]] = None
-):
-    selectors = []
-    if isinstance(selector, str):
-        selector = selectors.append(cq.StringSyntaxSelector(selector))
-    elif isinstance(selector, cq.Selector):
-        selectors.append(selector)
-    
-    if group is not None:
-        selectors.append(GroupSelector(group))
-    if indices is not None:
-        selectors.append(IndexSelector(indices))
-    if filter is not None:
-        selectors.append(FilterSelector(filter))
 
-    if len(selectors) > 0:
-        prev_selector = selectors[0]
-        for selector in selectors[1:]:
-            prev_selector = cq.selectors.AndSelector(prev_selector, selector)
-        return prev_selector
-    return None
+    def select(self, selectable: "WorkplaneSelectable", cq_type: CQType, is_initial: bool = False, is_exclusive: bool = False, is_intersection: bool = False):
+        workplane = selectable.initial_workplane if is_initial else selectable.workplane
+        cq_obj = workplane._getTagged(self.tag) if self.tag else workplane
+        filtered_entities = list(CQLinq.select(cq_obj, cq_type))
 
+        if isinstance(self.selector, str):
+            filtered_entities = cq.StringSyntaxSelector(self.selector).filter(filtered_entities)
+        elif isinstance(self.selector, cq.Selector):
+            filtered_entities = self.selector.filter(filtered_entities)
 
+        if self.type:
+            inv_type = "exterior" if self.type == "interior" else "interior"
+            if is_exclusive:
+                type_group = self.type and selectable.type_groups[self.type].difference(selectable.type_groups[inv_type])
+            elif is_intersection:
+                type_group = self.type and selectable.type_groups[self.type].intersection(selectable.type_groups[inv_type])
+            else:
+                type_group = selectable.type_groups[self.type]
+            filtered_entities = GroupSelector(type_group).filter(filtered_entities)
+
+        if self.indices is not None:
+            filtered_entities = IndexSelector(self.indices).filter(filtered_entities)
+        if self.filter is not None:
+            filtered_entities = FilterSelector(self.filter).filter(filtered_entities)
+
+        return filtered_entities
 
 class WorkplaneSelectable:
     workplane: cq.Workplane
-    def __init__(self, workplane: cq.Workplane, only_faces: bool = False, is_exclusive: bool = False, use_raycast: bool = False) -> None:
+    def __init__(self, workplane: cq.Workplane) -> None:
         self.workplane = workplane
         self.initial_workplane = workplane
-        self.type_groups = CQLinq.groupByTypes(self.workplane, only_faces=only_faces, use_raycast=use_raycast, is_exclusive=is_exclusive)
+        
+    def refresh(self, use_raycast: bool = False):
+        self.type_groups = CQLinq.groupByTypes(self.workplane, use_raycast=use_raycast)
+        self.face_edge_groups = cast(
+            dict[cq.Edge, OrderedSet[cq.Face]], 
+            CQLinq.groupBy(self.workplane, "face", "edge")
+        )
 
     def end(self, num: Optional[int] = None):
         if num is None:
@@ -48,33 +62,28 @@ class WorkplaneSelectable:
         return self
 
     def solids(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        type_group = type and self.type_groups[type]
-        selector = to_selector(selector, type_group, indices, filter)
-        self.workplane = self.workplane.solids(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "solid"))
         return self
 
     def faces(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        type_group = type and self.type_groups[type]
-        selector = to_selector(selector, type_group, indices, filter)
-        self.workplane = self.workplane.faces(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "face"))
         return self
     
     def edges(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        type_group = type and self.type_groups[type]
-        selector = to_selector(selector, type_group, indices, filter)
-        self.workplane = self.workplane.edges(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "edge"))
         return self
 
     def wires(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        type_group = type and self.type_groups[type]
-        selector = to_selector(selector, type_group, indices, filter)
-        self.workplane = self.workplane.wires(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "wire"))
         return self
 
     def vertices(self, selector: Union[cq.Selector, str, None] = None, tag: Union[str, None] = None, type: Optional[CQGroupTypeString] = None, indices: Optional[Sequence[int]] = None, filter: Optional[Callable[[CQObject], bool]] = None):
-        type_group = type and self.type_groups[type]
-        selector = to_selector(selector, type_group, indices, filter)
-        self.workplane = self.workplane.vertices(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "vertex"))
         return self
 
     def fromTagged(self, tags: Union[str, Iterable[str]], resolve_type: Optional[CQType] = None, invert: bool = True):        

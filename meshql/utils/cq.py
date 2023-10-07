@@ -92,7 +92,7 @@ class CQLinq:
     def select(target: Union[cq.Workplane, Iterable[CQObject], CQObject], select_type: Optional[CQType] = None):
         cq_objs = target.vals() if isinstance(target, cq.Workplane) else ([target] if isinstance(target, CQObject) else list(target))
         
-        if type is None or len(cq_objs) > 0 and CQ_TYPE_STR_MAPPING[type(cq_objs[0])] == select_type:
+        if type is None:
             yield from cq_objs
         
         for cq_obj in cq_objs:
@@ -136,9 +136,27 @@ class CQLinq:
         # sort filtered in the same order as filtered_objs
         return [cq_obj for cq_obj in filter_objs if cq_obj in filtered]
         
+    @staticmethod
+    def find_nearest(
+        target: Union[cq.Workplane, CQObject, Sequence[CQObject]], 
+        near_shape: cq.Shape, tolerance: Optional[float] = None, 
+        excluded: Optional[Sequence[CQObject]] = None,
+        select_type: Optional[CQType] = None
+    ):
+        min_dist_shape, min_dist = None, float("inf")
+        for shape in CQLinq.select(target, select_type or CQ_TYPE_STR_MAPPING[type(near_shape)]):
+            if excluded and shape in excluded:
+                continue
+            dist =  (shape.Center() - near_shape.Center()).Length
+            if dist != 0 and dist < min_dist:
+                if (tolerance and dist <= tolerance) or not tolerance:
+                    min_dist_shape, min_dist = shape, dist
+        return cast(cq.Shape, min_dist_shape)
+
+
 
     @staticmethod
-    def sort(target: Union[cq.Edge, Sequence[cq.Edge]]):
+    def sortByConnect(target: Union[cq.Edge, Sequence[cq.Edge]]):
         unsorted_cq_edges = [target] if isinstance(target, cq.Edge) else target
         cq_edges = list(unsorted_cq_edges[1:])
         sorted_paths = [DirectedPath(unsorted_cq_edges[0])]
@@ -172,7 +190,6 @@ class CQLinq:
         target: Union[cq.Workplane, Sequence[CQObject]], 
         only_faces=False, 
         split_tol = 1E-5,
-        is_exclusive: bool = False,
         use_raycast: bool = True,
     ): 
         workplane = target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
@@ -238,10 +255,6 @@ class CQLinq:
                     if not only_faces:
                         add_wire_to_group(face.Wires(), face_registry)
 
-
-        if is_exclusive:
-            groups["interior"] -= groups["exterior"]
-
         return groups
 
 
@@ -278,18 +291,6 @@ class CQExtensions:
         face_centroid = face.Center()
         interior_dot_product = face_normal.dot(face_centroid)
         return (not invert and interior_dot_product < 0) or (invert and interior_dot_product >= 0)
-
-    @staticmethod
-    def find_nearest(target: Union[cq.Workplane, CQObject, Sequence[CQObject]], near_shape: cq.Shape, tolerance: Optional[float] = None, excluded: Optional[Sequence[CQObject]] = None):
-        min_dist_shape, min_dist = None, float("inf")
-        for shape in CQLinq.select(target, CQ_TYPE_STR_MAPPING[type(near_shape)]):
-            if excluded and shape in excluded:
-                continue
-            dist =  (shape.Center() - near_shape.Center()).Length
-            if dist != 0 and dist < min_dist:
-                if (tolerance and dist <= tolerance) or not tolerance:
-                    min_dist_shape, min_dist = shape, dist
-        return cast(cq.Shape, min_dist_shape)
 
     @staticmethod
     def split_intersect(
