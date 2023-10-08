@@ -61,7 +61,7 @@ class GeometryQL(WorkplaneSelectable):
         use_raycast = use_raycast or on_split is not None
 
         super().__init__(workplane)
-
+        self.refresh(use_raycast=use_raycast)
 
         topods = workplane.toOCC()
         gmsh.model.occ.importShapesNativePointer(topods._address())
@@ -236,7 +236,7 @@ class GeometryQL(WorkplaneSelectable):
         cq_faces: Sequence[CQObject], 
         max_nodes: int, 
         min_nodes: int = 1,
-        arrangement: TransfiniteArrangementType = "Left"
+        arrangement: TransfiniteArrangementType = "Left",
     ):
         assert isinstance(cq_faces[0], cq.Face), "cq_faces must be a list of faces"
         cq_faces = cast(Sequence[cq.Face], cq_faces)
@@ -271,7 +271,8 @@ class GeometryQL(WorkplaneSelectable):
         self,
         max_nodes: int,
         min_nodes: int = 1,
-        auto_recombine: bool = True
+        auto_recombine: bool = True,
+
     ):
         self.is_structured = True
         if CQExtensions.get_dimension(self.workplane) == 2:

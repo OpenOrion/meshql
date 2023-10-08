@@ -3,10 +3,10 @@ import numpy as np
 import cadquery as cq
 NumpyFloat = np.float32
 Number = Union[int, float, NumpyFloat]
-VectorSequence = Union[tuple[Number, Number, Number], tuple[Number, Number], np.ndarray]
-VectorLike = Union[VectorSequence, cq.Vector]
-LineTuple = tuple[VectorSequence, VectorSequence]
-Axis = Union[Literal["X", "Y", "Z"], VectorSequence, cq.Vector]
+VectorTuple = Union[tuple[Number, Number, Number], tuple[Number, Number], np.ndarray]
+VectorLike = Union[VectorTuple, cq.Vector]
+LineTuple = tuple[VectorTuple, VectorTuple]
+Axis = Union[Literal["X", "Y", "Z"], VectorTuple, cq.Vector]
 
 def to_array(vec: VectorLike):
     if isinstance(vec, np.ndarray):

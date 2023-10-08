@@ -5,7 +5,7 @@ from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
 from meshql.utils.cq import CQCache, CQExtensions, CQGroupTypeString, CQLinq
 from meshql.selector import Selection, WorkplaneSelectable
 from meshql.utils.shapes import get_sampling
-from meshql.utils.types import Axis, LineTuple, Number, OrderedSet, VectorSequence, to_2d_array, to_array, to_vec
+from meshql.utils.types import Axis, LineTuple, Number, OrderedSet, VectorTuple, to_2d_array, to_array, to_vec
 from jupyter_cadquery import show
 
 SplitAt = Literal["end", "per"]
@@ -64,8 +64,8 @@ class Split(WorkplaneSelectable):
 
     def from_plane(
         self,
-        base_pnt: VectorSequence = (0,0,0), 
-        angle: VectorSequence = (0,0,1),
+        base_pnt: VectorTuple = (0,0,0), 
+        angle: VectorTuple = (0,0,1),
         sizing: Literal["maxDim", "infinite"] = "maxDim"
     ):
         split_face = get_plane_split_face(self.workplane, base_pnt, angle, sizing)
@@ -80,7 +80,7 @@ class Split(WorkplaneSelectable):
         dir: Literal["away", "towards", "both"],
         axis: Optional[Axis] = None,
         snap_tolerance: Optional[float] = None,
-        angle_offset: VectorSequence = (0,0,0),
+        angle_offset: VectorTuple = (0,0,0),
     ):
         self.refresh(use_raycast=True)
         # print([edge.Center() for edge in start.select(self, "edge", is_intersection=True)])
@@ -122,37 +122,37 @@ class Split(WorkplaneSelectable):
         self, 
         selection: Selection,
         dir: Optional[Literal["away", "towards", "both"]] = None,
-        axis: Union[Sequence[MultiFaceAxis], MultiFaceAxis] = "avg",
+        axis: Union[MultiFaceAxis, list[MultiFaceAxis]] = "avg",
         snap_tolerance: Optional[float] = None,
-        angle_offset: VectorSequence = (0,0,0),
+        angle_offset: VectorTuple = (0,0,0),
         is_initial: bool = False,
     ):
-        is_single_axis = isinstance(axis, (np.ndarray, tuple, list)) and isinstance(axis[0], (float, int))
         offset = to_vec(np.radians(list(angle_offset)))
-        if dir is None:
-            if is_single_axis:
-                dir = "towards"
-            else:
-                dir = "away" if type == "interior" else "towards"
-        
+        dir = dir or "away" if selection.type == "interior" else "towards"        
         filtered_edges = cast(Sequence[cq.Edge], selection.select(self, "edge", is_initial=is_initial, is_exclusive=True))
 
         split_faces = list[cq.Shape]()
         snap_edges = OrderedSet[cq.Edge]()
         for edge in filtered_edges:
             faces = self.face_edge_groups[edge]
-            for ax in ([axis] if is_single_axis else axis):
-                normal_vec = self.get_normal_vec(faces, ax, offset)
-                split_face = get_edge_split_face(self.workplane, edge, normal_vec, dir, snap_tolerance, snap_edges)
-                split_faces.append(split_face)
+            split_face = None
+            for _axis in (axis if isinstance(axis, list) else [axis]):
+                normal_vec = self.get_normal_vec(faces, cast(Axis, _axis), offset)
+                curr_split_face = get_edge_split_face(self.workplane, edge, normal_vec, dir, snap_tolerance, snap_edges)
+                if split_face is None:
+                    split_face = curr_split_face
+                else:
+                    split_face = split_face.fuse(curr_split_face)
+            assert split_face, "No split face found"
+            split_faces.append(split_face)
 
         self.apply_split(split_faces)
         return self
 
     def from_anchor(
         self, 
-        anchor: Union[list[VectorSequence], VectorSequence] = (0,0,0), 
-        angle: Union[list[VectorSequence], VectorSequence] = (0,0,0),
+        anchor: Union[list[VectorTuple], VectorTuple] = (0,0,0), 
+        angle: Union[list[VectorTuple], VectorTuple] = (0,0,0),
         snap_tolerance: Optional[float] = None,
         until: Literal["next", "all"] = "next",
     ):
@@ -172,7 +172,7 @@ class Split(WorkplaneSelectable):
         self.from_lines(edges)
         return self
     
-    def from_pnts(self, pnts: Sequence[VectorSequence]):
+    def from_pnts(self, pnts: Sequence[VectorTuple]):
         pnt_vecs = [to_vec(pnt) for pnt in pnts]
         split_face = cq.Face.makeFromWires(cq.Wire.makePolygon(pnt_vecs))
         self.apply_split(split_face)
@@ -253,8 +253,8 @@ def get_split_face_from_edges(edge1: cq.Edge, edge2: cq.Edge, is_line_end: bool 
 
 def get_plane_split_face(
     workplane: cq.Workplane,
-    base_pnt: VectorSequence = (0,0,0), 
-    angle: VectorSequence = (0,0,1),
+    base_pnt: VectorTuple = (0,0,0), 
+    angle: VectorTuple = (0,0,1),
     sizing: Literal["maxDim", "infinite"] = "maxDim"    
 ):
     maxDim = workplane.findSolid().BoundingBox().DiagonalLength * 10

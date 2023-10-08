@@ -10,7 +10,7 @@ from typing import Callable, Iterable, Literal, Optional, Sequence, TypeVar, Uni
 import numpy as np
 from meshql.utils.plot import add_plot
 from meshql.utils.shapes import get_sampling
-from meshql.utils.types import OrderedSet, NumpyFloat, VectorSequence, to_vec
+from meshql.utils.types import OrderedSet, NumpyFloat, VectorTuple, to_vec
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
@@ -32,7 +32,7 @@ class DirectedPath:
     edge: cq.Edge
     "edge or face of path"
 
-    direction: int = 1
+    direction: Literal[1, -1] = 1
     "direction of path"
 
     def __post_init__(self):
@@ -295,7 +295,7 @@ class CQExtensions:
     @staticmethod
     def split_intersect(
         workplane: cq.Workplane, 
-        anchor: Union[cq.Vector, VectorSequence], 
+        anchor: Union[cq.Vector, VectorTuple], 
         splitter: CQObject, 
         snap_tolerance: Optional[float] = None,
     ) -> Optional[cq.Vertex]:
