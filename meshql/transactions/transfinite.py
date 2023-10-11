@@ -1,7 +1,7 @@
 import gmsh
 import numpy as np
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence
+from typing import Iterable, Literal, Optional, Sequence, Union
 from meshql.entity import Entity, ENTITY_DIM_MAPPING
 from meshql.transaction import SingleEntityTransaction, MultiEntityTransaction, Transaction
 from meshql.utils.types import OrderedSet
@@ -68,7 +68,7 @@ class SetTransfiniteFace(SingleEntityTransaction):
     arrangement: TransfiniteArrangementType = "Left"
     "arrangement of transfinite face"
 
-    corners: Optional[OrderedSet[Entity]] = None
+    corners: Optional[Iterable[Entity]] = None
     "corner point tags for transfinite face"
 
     def before_gen(self):
