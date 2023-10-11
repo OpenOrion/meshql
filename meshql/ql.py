@@ -40,10 +40,16 @@ class GeometryQL:
             self._workplane = self._workplane.end(num)
         return self
 
-    def load(self, target: Union[cq.Workplane, str, Iterable[CQObject]], splits: Optional[Callable[[cq.Workplane], Sequence[cq.Face]]] = None, use_cache: bool = False):
+    def load(
+        self, 
+        target: Union[cq.Workplane, str, Iterable[CQObject]], 
+        splits: Optional[Callable[[cq.Workplane], Sequence[cq.Face]]] = None,
+        use_cache: bool = False, 
+        auto_label: bool = False
+    ):
         assert self._workplane is None, "Workplane is already loaded."
 
-        workplane = self._initial_workplane = CQExtensions.import_workplane(target)
+        workplane = self._pre_split_workplane = CQExtensions.import_workplane(target)
         is_2d = CQExtensions.get_dimension(workplane) == 2
 
         # extrudes 2D shapes to 3D
@@ -58,24 +64,51 @@ class GeometryQL:
             # fuses top faces to appear as one Compound in GMSH
             faces = cast(Sequence[cq.Face], workplane.faces(">Z").vals())
             fused_face = CQExtensions.fuse_shapes(faces)
-            self._initial_workplane = cq.Workplane(fused_face)
+            workplane = cq.Workplane(fused_face)
         else:
-            self._initial_workplane = workplane
+            workplane = workplane
 
-        self._type_groups = CQLinq.groupByTypes(self._initial_workplane, exclude_split=is_2d)
+        self._type_groups = CQLinq.groupByTypes(workplane, exclude_split=is_2d)
 
 
-        self._workplane = self._initial_workplane
+        self._workplane = self._initial_workplane = workplane
         topods = self._workplane.toOCC()
         gmsh.model.occ.importShapesNativePointer(topods._address())
         gmsh.model.occ.synchronize()
 
         self._entity_ctx = CQEntityContext(self._workplane)
 
+        if auto_label:
+            self._transfer_tags_to_physical_groups()
+
         self._tag_workplane()
 
         return self    
     
+    def _transfer_tags_to_physical_groups(self):
+        for tag, workplane in self._pre_split_workplane.ctx.tags.items():
+            self._add_physical_groups_for_objects(workplane.vals(), tag)
+
+    def _add_physical_groups_for_objects(self, cq_objects: Sequence[CQObject], label: Union[str, Sequence[str]]):
+        entities = self._entity_ctx.select_many(cq_objects)
+        if len(entities) == 0:
+            return
+        if  isinstance(label, str):
+            set_physical_group = SetPhysicalGroup(entities, label)
+            self._ctx.add_transaction(set_physical_group)
+        else:
+            objs = list(entities)
+            group_entities: dict[str, OrderedSet[Entity]] = {}
+
+            for i, group_name in enumerate(label):
+                new_group_entity = objs[i]
+                if group_name not in group_entities:
+                    group_entities[group_name] = OrderedSet()
+                group_entities[group_name].add(new_group_entity)
+            
+            for group_name, group_objs in group_entities.items():
+                set_physical_group = SetPhysicalGroup(group_objs, group_name)
+                self._ctx.add_transaction(set_physical_group)
 
     def _tag_workplane(self):
         "Tag all gmsh entity tags to workplane"
@@ -141,23 +174,7 @@ class GeometryQL:
         return self
 
     def addPhysicalGroup(self, group: Union[str, Sequence[str]]):
-        if  isinstance(group, str):
-            set_physical_group = SetPhysicalGroup(self.vals(), group)
-            self._ctx.add_transaction(set_physical_group)
-        else:
-            objs = list(self.vals())
-            group_entities: dict[str, OrderedSet[Entity]] = {}
-
-            for i, group_name in enumerate(group):
-                new_group_entity = objs[i]
-                if group_name not in group_entities:
-                    group_entities[group_name] = OrderedSet()
-                group_entities[group_name].add(new_group_entity)
-            
-            for group_name, group_objs in group_entities.items():
-                set_physical_group = SetPhysicalGroup(group_objs, group_name)
-                self._ctx.add_transaction(set_physical_group)
-
+        self._add_physical_groups_for_objects(self._workplane.vals(), group)
         return self
 
     def recombine(self, angle: float = 45):
