@@ -5,20 +5,18 @@ import hashlib
 import base64
 from plotly import graph_objects as go
 import cadquery as cq
-from cadquery.cq import CQObject, VectorLike
-from typing import Callable, Iterable, Literal, Optional, Protocol, Sequence, TypeVar, Union, cast
+from cadquery.cq import CQObject
+from typing import Callable, Iterable, Literal, Optional, Sequence, TypeVar, Union, cast
 import numpy as np
 from meshql.utils.plot import add_plot
 from meshql.utils.shapes import get_sampling
-from meshql.utils.types import OrderedSet, NumpyFloat, VectorSequence, to_vec
+from meshql.utils.types import OrderedSet, NumpyFloat
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
-from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-from OCP.TopAbs import TopAbs_State
 
-CQType = Literal["compound", "solid", "shell", "face", "wire", "edge", "vertex"]
+ShapeType = Literal["compound", "solid", "shell", "face", "wire", "edge", "vertex"]
 CQGroupTypeString = Literal["split", "interior", "exterior"]
 CQEdgeOrFace = Union[cq.Edge, cq.Face]
 TShape = TypeVar('TShape', bound=cq.Shape)
@@ -68,7 +66,7 @@ class Group:
     def end(self):
         return self.paths[-1].end
 
-CQ_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
+SHAPE_TYPE_STR_MAPPING: dict[type[CQObject], ShapeType] = {
     cq.Compound: "compound",
     cq.Solid: "solid",
     cq.Shell: "shell",
@@ -77,20 +75,21 @@ CQ_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
     cq.Edge: "edge",
     cq.Vertex: "vertex",
 }
+SHAPE_TYPE_CLASS_MAPPING = dict(zip(SHAPE_TYPE_STR_MAPPING.values(), SHAPE_TYPE_STR_MAPPING.keys()))
 
-CQ_TYPE_RANKING = dict(zip(CQ_TYPE_STR_MAPPING.keys(), range(len(CQ_TYPE_STR_MAPPING)+1)[::-1]))
+SHAPE_TYPE_RANKING = dict(zip(SHAPE_TYPE_STR_MAPPING.keys(), range(len(SHAPE_TYPE_STR_MAPPING)+1)[::-1]))
 
 class CQLinq:    
     @staticmethod
-    def select_tagged(workplane: cq.Workplane, tags: Union[str, Iterable[str]], type: Optional[CQType] = None):
+    def select_tagged(workplane: cq.Workplane, tags: Union[str, Iterable[str]], shape_type: Optional[ShapeType] = None):
         for tag in ([tags] if isinstance(tags, str) else tags):
-            if type is None:
+            if shape_type is None:
                 yield from workplane._getTagged(tag).vals()
             else:
-               yield from CQLinq.select(workplane._getTagged(tag).vals(), type)    
+               yield from CQLinq.select(workplane._getTagged(tag).vals(), shape_type)    
 
     @staticmethod
-    def select(target: Union[cq.Workplane, Iterable[CQObject], CQObject], select_type: Optional[CQType] = None):
+    def select(target: Union[cq.Workplane, Iterable[CQObject], CQObject], shape_type: Optional[ShapeType] = None):
         cq_objs = target.vals() if isinstance(target, cq.Workplane) else ([target] if isinstance(target, CQObject) else list(target))
         
         if type is None:
@@ -98,27 +97,27 @@ class CQLinq:
         
         for cq_obj in cq_objs:
             assert isinstance(cq_obj, cq.Shape), "target must be a shape"
-            if select_type is None:
+            if shape_type is None:
                 yield cq_obj
-            elif select_type == "compound":
+            elif shape_type == "compound":
                 yield from cq_obj.Compounds()
-            elif select_type == "solid":
+            elif shape_type == "solid":
                 yield from cq_obj.Solids()
-            elif select_type == "shell":
+            elif shape_type == "shell":
                 yield from cq_obj.Shells()
-            elif select_type == "face":
+            elif shape_type == "face":
                 yield from cq_obj.Faces()
-            elif select_type == "wire":
+            elif shape_type == "wire":
                 yield from cq_obj.Wires()
-            elif select_type == "edge":
+            elif shape_type == "edge":
                 yield from cq_obj.Edges()
-            elif select_type == "vertex":
+            elif shape_type == "vertex":
                 yield from cq_obj.Vertices()
 
     @staticmethod
-    def select_batch(target: Union[cq.Workplane, Iterable[CQObject]], parent_type: CQType, child_type: CQType):
+    def select_batch(target: Union[cq.Workplane, Iterable[CQObject]], parent_type: ShapeType, child_type: ShapeType):
         cq_objs = list(target.vals() if isinstance(target, cq.Workplane) else target)
-        if CQ_TYPE_STR_MAPPING[type(cq_objs[0])] == child_type:
+        if SHAPE_TYPE_STR_MAPPING[type(cq_objs[0])] == child_type:
             yield cq_objs
         else:
             parent_cq_objs = CQLinq.select(cq_objs, parent_type)
@@ -140,20 +139,21 @@ class CQLinq:
     @staticmethod
     def find_nearest(
         target: Union[cq.Workplane, CQObject, Sequence[CQObject]], 
-        near_shape: cq.Shape, 
+        near_shape: Union[cq.Shape, cq.Vector], 
         tolerance: Optional[float] = None, 
         excluded: Optional[Sequence[CQObject]] = None,
-        select_type: Optional[CQType] = None
+        shape_type: Optional[ShapeType] = None
     ):
         min_dist_shape, min_dist = None, float("inf")
-        for shape in CQLinq.select(target, select_type or CQ_TYPE_STR_MAPPING[type(near_shape)]):
+        for shape in CQLinq.select(target, shape_type or SHAPE_TYPE_STR_MAPPING[type(near_shape)]):
             if excluded and shape in excluded:
                 continue
-            dist =  (shape.Center() - near_shape.Center()).Length
+            near_center = near_shape.Center() if isinstance(near_shape, cq.Shape) else near_shape
+            dist =  (shape.Center() - near_center).Length
             if dist != 0 and dist < min_dist:
                 if (tolerance and dist <= tolerance) or not tolerance:
                     min_dist_shape, min_dist = shape, dist
-        return cast(cq.Shape, min_dist_shape)
+        return cast(Optional[cq.Shape], min_dist_shape)
 
 
 
@@ -190,8 +190,10 @@ class CQLinq:
     @staticmethod
     def groupByTypes(
         target: Union[cq.Workplane, Sequence[CQObject]], 
+        max_dim: float,
+        tol: Optional[float] = None,
+        prev_groups: Optional[dict[CQGroupTypeString, OrderedSet[CQObject]]] = None,
         only_faces=False, 
-        ray_tol: Optional[float] = None
     ): 
         workplane = target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
         add_wire_to_group = lambda wires, group: group.update([
@@ -205,31 +207,35 @@ class CQLinq:
             "interior": OrderedSet[CQObject](),
             "exterior": OrderedSet[CQObject](),
         }
-        faces = list(CQLinq.select(target, "face"))
         is_2d = CQExtensions.get_dimension(workplane) == 2
+        workplane = workplane.extrude(-1) if is_2d else workplane
+        for solid in workplane.solids().vals():
+            for face in solid.Faces():
+                face_group = None
+                if prev_groups:
+                    for prev_groups_type, prev_group in prev_groups.items():
+                        if face in prev_group:
+                            face_group = groups[prev_groups_type]
+                            break
+                
+                if face_group is None:
+                    face_group_type = CQExtensions.get_face_group_type(workplane, face, max_dim, tol)
+                    face_group = groups[face_group_type]
+
+                face_group.add(face)
+                if not only_faces:
+                    add_wire_to_group(face.Wires(), face_group)
 
         if is_2d:
-            #TODO: transfer to 3D and back to 2D
-            for face in faces:
-                assert isinstance(face, cq.Face), "object must be a face"
-                add_wire_to_group(face.innerWires(), groups["interior"])
-                add_wire_to_group([face.outerWire()], groups["exterior"])
-        else:
-            for solid in workplane.solids().vals():
-                for face in solid.Faces():
-                    face_group_type = CQExtensions.get_face_group_type(solid, face, ray_tol)
-                    face_registry = groups[face_group_type]
-
-                    
-                    face_registry.add(face)
-                    if not only_faces:
-                        add_wire_to_group(face.Wires(), face_registry)
+            exterior_group_tmp = groups["exterior"].difference(groups["interior"])
+            groups["interior"] = groups["interior"].difference(groups["exterior"])
+            groups["exterior"] = exterior_group_tmp
 
         return groups
 
 
     @staticmethod
-    def groupBy(target: Union[cq.Workplane, Iterable[CQObject]], parent_type: CQType, child_type: CQType): 
+    def groupBy(target: Union[cq.Workplane, Iterable[CQObject]], parent_type: ShapeType, child_type: ShapeType): 
         groups: dict[CQObject, OrderedSet[CQObject]] = {}
         
         cq_objs = target.vals() if isinstance(target, cq.Workplane) else (target if isinstance(target, Iterable) else [target])
@@ -255,60 +261,48 @@ class CQLinq:
 
 class CQExtensions:
     @staticmethod
-    def get_face_group_type(object: CQObject, face: cq.Face, ray_tol: Optional[float] = None) -> CQGroupTypeString:
-        maxDim = object.BoundingBox().DiagonalLength
-        ray_tol = ray_tol or maxDim*0.005
+    def is_interior_face(face: CQObject):
+        assert isinstance(face, cq.Face), "object must be a face"
+        face_normal = face.normalAt()
+        face_centroid = face.Center()
+        interior_dot_product = face_normal.dot(face_centroid)
+        return interior_dot_product < 0
+
+
+    @staticmethod
+    def get_face_group_type(
+        workplane: cq.Workplane, 
+        face: cq.Face, 
+        maxDim: float, 
+        tol: Optional[float] = None
+    ) -> CQGroupTypeString:
+        total_solid = workplane.findSolid()
         is_planar = face.geomType() == "PLANE"
         if is_planar:
-            face_center = face.Center()
-            face_normal = face.normalAt()
+            face_center, face_normal = face.Center(), face.normalAt()
+            normalized_face_normal = face_normal/face_normal.Length
+            is_interior = is_split = CQExtensions.is_interior_face(face)
+            if is_interior:
+                intersect_line = cq.Edge.makeLine(face_center, face_center + (normalized_face_normal*0.1))
+                intersect_vertices = total_solid.intersect(intersect_line, tol=tol).Vertices()
+                is_split = len(intersect_vertices) > 0 and intersect_vertices[0].distance(face) < 1E-8
         else:
-            nearest_center_gp_point = GeomAPI_ProjectPointOnSurf(face.Center().toPnt(), face._geomAdaptor()).NearestPoint()                
-            face_center = cq.Vector(nearest_center_gp_point.X(), nearest_center_gp_point.Y(), nearest_center_gp_point.Z())
-            face_normal = face.normalAt(face_center)
-        normalized_face_normal = face_normal/face_normal.Length
-        
-        intersect_line = cq.Edge.makeLine(face_center, face_center + (normalized_face_normal*maxDim))
-        intersected_vertices = object.intersect(intersect_line).Vertices()
-        is_interior = len(intersected_vertices) != 0
-        is_split = is_interior and intersected_vertices[0].distance(face) < ray_tol
+            try:
+                nearest_center_gp_point = GeomAPI_ProjectPointOnSurf(face.Center().toPnt(), face._geomAdaptor()).NearestPoint()                
+                face_center = cq.Vector(nearest_center_gp_point.X(), nearest_center_gp_point.Y(), nearest_center_gp_point.Z())
+                face_normal = face.normalAt(face_center)
+            except:
+                face_center, face_normal = face.Center(), face.normalAt()
+            normalized_face_normal = face_normal/face_normal.Length
+            intersect_line = cq.Edge.makeLine(face_center, face_center + (normalized_face_normal*maxDim))
+            intersect_vertices = total_solid.intersect(intersect_line, tol=tol).Vertices()
+            is_interior = len(intersect_vertices) != 0
+            is_split = is_interior and intersect_vertices[0].distance(face) < 1E-8
 
         if is_split:
             return "split"
         return "interior" if is_interior else "exterior"
 
-    @staticmethod
-    def is_interior_face(face: CQObject, invert: bool = False):
-        assert isinstance(face, cq.Face), "object must be a face"
-        face_normal = face.normalAt()
-        face_centroid = face.Center()
-        interior_dot_product = face_normal.dot(face_centroid)
-        return (not invert and interior_dot_product < 0) or (invert and interior_dot_product >= 0)
-
-    @staticmethod
-    def split_intersect(
-        workplane: cq.Workplane, 
-        anchor: Union[cq.Vector, VectorSequence], 
-        splitter: CQObject, 
-        snap_tolerance: Optional[float] = None,
-    ) -> Optional[cq.Vertex]:
-
-        intersected_edges = workplane.intersect(cq.Workplane(splitter)).edges().vals()
-        if len(intersected_edges) == 0:
-            return None
-
-        intersected_vertices = OrderedSet(CQLinq.select(intersected_edges, "vertex"))
-        min_dist_vertex, min_dist = None, float("inf") 
-        for vertex in intersected_vertices:
-                intersect_dist = (cq.Vector(vertex.X, vertex.Y, vertex.Z) - to_vec(anchor)).Length
-                if intersect_dist !=0 and intersect_dist < min_dist:
-                    min_dist_vertex, min_dist = cast(cq.Vertex, vertex), intersect_dist
-            
-        if snap_tolerance and isinstance(min_dist_vertex, cq.Vertex):
-            nearest_point = CQExtensions.find_nearest(workplane, min_dist_vertex, "vertex", snap_tolerance)
-            if nearest_point:
-                return nearest_point
-        return min_dist_vertex
 
     @staticmethod
     def get_angle_between(prev: CQEdgeOrFace, curr: CQEdgeOrFace):
@@ -443,67 +437,3 @@ class CQCache:
             for file in os.listdir(CACHE_DIR_PATH):
                 os.remove(os.path.join(CACHE_DIR_PATH, file))
 
-
-class IndexSelector(cq.Selector):
-    def __init__(self, indices: Sequence[int]):
-        self.indices = indices
-    def filter(self, objectList):
-        return [objectList[i] for i in self.indices]
-
-FilterExpression = Optional[Callable[[CQObject], bool]]
-class FilterSelector(cq.Selector):
-    def __init__(self, objFilter: FilterExpression):
-        self.objFilter = objFilter
-    def filter(self, objectList):
-        return list(filter(self.objFilter, objectList))
-
-
-class GroupSelector(cq.Selector):
-    def __init__(self, allow: OrderedSet[CQObject]):
-        self.allow = allow
-    def filter(self, objectList):
-        filtered_objs = []
-        for obj in objectList:
-            if obj in self.allow:
-                filtered_objs.append(obj)
-        return filtered_objs
-
-class Selectable(Protocol):
-    workplane: cq.Workplane
-    initial_workplane: cq.Workplane
-    type_groups: dict[CQGroupTypeString, OrderedSet[CQObject]]
-
-@dataclass
-class Selection:
-    selector: Union[cq.Selector, str, None] = None
-    tag: Union[str, None] = None
-    type: Optional[CQGroupTypeString] = None
-    indices: Optional[Sequence[int]] = None 
-    filter: Optional[Callable[[CQObject], bool]] = None
-
-    def select(self, selectable: Selectable, cq_type: CQType, is_initial: bool = False, is_exclusive: bool = False, is_intersection: bool = False):
-        workplane = selectable.initial_workplane if is_initial else selectable.workplane
-        cq_obj = workplane._getTagged(self.tag) if self.tag else workplane
-        filtered_entities = list(CQLinq.select(cq_obj, cq_type))
-
-        if isinstance(self.selector, str):
-            filtered_entities = cq.StringSyntaxSelector(self.selector).filter(filtered_entities)
-        elif isinstance(self.selector, cq.Selector):
-            filtered_entities = self.selector.filter(filtered_entities)
-
-        if self.type:
-            inv_type = "exterior" if self.type == "interior" else "interior"
-            if is_exclusive:
-                type_group = self.type and selectable.type_groups[self.type].difference(selectable.type_groups[inv_type])
-            elif is_intersection:
-                type_group = self.type and selectable.type_groups[self.type].intersection(selectable.type_groups[inv_type])
-            else:
-                type_group = selectable.type_groups[self.type]
-            filtered_entities = GroupSelector(type_group).filter(filtered_entities)
-
-        if self.indices is not None:
-            filtered_entities = IndexSelector(self.indices).filter(filtered_entities)
-        if self.filter is not None:
-            filtered_entities = FilterSelector(self.filter).filter(filtered_entities)
-
-        return filtered_entities

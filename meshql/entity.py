@@ -3,11 +3,11 @@ import cadquery as cq
 from cadquery.cq import CQObject
 from dataclasses import dataclass
 from typing import Iterable, Optional, OrderedDict, Sequence, Union, cast
-from meshql.utils.cq import CQLinq, CQType, CQ_TYPE_STR_MAPPING
+from meshql.utils.cq import CQLinq, ShapeType, SHAPE_TYPE_STR_MAPPING
 from meshql.utils.types import OrderedSet
 
 
-ENTITY_DIM_MAPPING: dict[CQType, int] = {
+ENTITY_DIM_MAPPING: dict[ShapeType, int] = {
     "vertex": 0,
     "edge": 1,
     "face": 2,
@@ -16,7 +16,7 @@ ENTITY_DIM_MAPPING: dict[CQType, int] = {
 
 @dataclass
 class Entity:
-    type: CQType
+    type: ShapeType
     "dimension type of the entity."
     
     tag: int = -1
@@ -46,7 +46,7 @@ class CQEntityContext:
     def __init__(self, workplane: cq.Workplane) -> None:
         self.dimension = 3 if len(workplane.solids().vals()) else 2
 
-        self.entity_registries: dict[CQType, OrderedDict[CQObject, Entity]] = {
+        self.entity_registries: dict[ShapeType, OrderedDict[CQObject, Entity]] = {
             "solid": OrderedDict[CQObject, Entity](),
             "shell": OrderedDict[CQObject, Entity](),
             "face":  OrderedDict[CQObject, Entity](),
@@ -61,7 +61,7 @@ class CQEntityContext:
             self._init_2d_objs(workplane)
 
     def add(self, obj: CQObject):
-        entity_type = CQ_TYPE_STR_MAPPING[type(obj)]
+        entity_type = SHAPE_TYPE_STR_MAPPING[type(obj)]
         registry = self.entity_registries[entity_type]
         if obj not in registry:
             tag = len(registry) + 1
@@ -69,11 +69,11 @@ class CQEntityContext:
 
 
     def select(self, obj: CQObject):
-        entity_type = CQ_TYPE_STR_MAPPING[type(obj)]
+        entity_type = SHAPE_TYPE_STR_MAPPING[type(obj)]
         registry = self.entity_registries[entity_type]
         return registry[obj]
     
-    def select_many(self, target: Union[cq.Workplane, Iterable[CQObject]], type: Optional[CQType] = None):
+    def select_many(self, target: Union[cq.Workplane, Iterable[CQObject]], type: Optional[ShapeType] = None):
         entities = OrderedSet[Entity]()
         objs = target.vals() if isinstance(target, cq.Workplane) else target
         selected_objs = objs if type is None else CQLinq.select(objs, type)
@@ -86,7 +86,7 @@ class CQEntityContext:
 
         return entities
     
-    def select_batch(self, target: Union[cq.Workplane, Iterable[CQObject]], parent_type: CQType, child_type: CQType):
+    def select_batch(self, target: Union[cq.Workplane, Iterable[CQObject]], parent_type: ShapeType, child_type: ShapeType):
         objs = target.vals() if isinstance(target, cq.Workplane) else target
         selected_batches = CQLinq.select_batch(objs, parent_type, child_type)
         for selected_batch in selected_batches:

@@ -5,6 +5,7 @@ from cadquery.cq import CQObject
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
 from meshql.entity import CQEntityContext, Entity
 from meshql.preprocessing.split import Split, SplitAt
+from meshql.selector import ConnectedShapesExplorer, Selection
 from meshql.transaction import Transaction, TransactionContext
 from meshql.transactions.algorithm import MeshAlgorithm2DType, MeshAlgorithm3DType, MeshSubdivisionType, SetMeshAlgorithm2D, SetMeshAlgorithm3D, SetSubdivisionAlgorithm
 from meshql.transactions.boundary_layer import UnstructuredBoundaryLayer, UnstructuredBoundaryLayer2D, get_boundary_ratio
@@ -12,7 +13,7 @@ from meshql.transactions.physical_group import SetPhysicalGroup
 from meshql.transactions.refinement import Recombine, Refine, SetMeshSize, SetSmoothing
 from meshql.transactions.transfinite import SetTransfiniteEdge, SetTransfiniteFace, SetTransfiniteSolid, TransfiniteArrangementType, TransfiniteMeshType
 from meshql.mesh.exporters import export_to_su2
-from meshql.utils.cq import CQ_TYPE_RANKING, CQ_TYPE_STR_MAPPING, CQExtensions, CQGroupTypeString, CQLinq, CQType, Selection
+from meshql.utils.cq import SHAPE_TYPE_RANKING, SHAPE_TYPE_STR_MAPPING, CQExtensions, CQGroupTypeString, CQLinq, ShapeType
 from meshql.utils.types import OrderedSet
 from meshql.utils.logging import logger
 from meshql.visualizer import visualize_mesh
@@ -37,7 +38,8 @@ class GeometryQL:
             self, 
             target: Union[cq.Workplane, str, Iterable[CQObject]], 
             on_split: Optional[Callable[[Split], Split]] = None,
-            ray_tol: Optional[float] = None,
+            max_dim: Optional[float] = None,
+            tol: Optional[float] = None,
             use_cache: bool = False,
 
         ):
@@ -48,19 +50,24 @@ class GeometryQL:
         if is_2d:
             workplane = workplane.extrude(-1)
 
+        split = None
         if on_split:
-            split = Split(workplane, use_cache, ray_tol)
-            workplane = on_split(split).apply_pending_splits().workplane
+            split = Split(workplane, use_cache, tol)
+            workplane = on_split(split).apply().workplane
 
-        self.type_groups = CQLinq.groupByTypes(workplane, ray_tol=ray_tol)
+        max_dim = max_dim or workplane.findSolid().BoundingBox().DiagonalLength * 10
+        prev_groups = split.type_groups if split else None
+        self.type_groups = CQLinq.groupByTypes(workplane, max_dim, tol, prev_groups)
 
         if is_2d:
             # fuses top faces to appear as one Compound in GMSH
             faces = cast(Sequence[cq.Face], workplane.faces(">Z").vals())
             fused_face = CQExtensions.fuse_shapes(faces)
             workplane = cq.Workplane(fused_face)
-        
+
         self.workplane = self.initial_workplane = workplane
+
+
 
         topods = workplane.toOCC()
         gmsh.model.occ.importShapesNativePointer(topods._address())
@@ -117,15 +124,23 @@ class GeometryQL:
     def val(self):
         return self._entity_ctx.select(self.workplane.val())
 
-    def fromTagged(self, tags: Union[str, Iterable[str]], resolve_type: Optional[CQType] = None, invert: bool = True):        
-        if isinstance(tags, str) and resolve_type is None:
+    def fromTagged(self, tags: Union[str, Iterable[str]], shape_type: Optional[ShapeType] = None, invert: bool = True):        
+        if isinstance(tags, str) and shape_type is None:
             self.workplane = self.workplane._getTagged(tags)
         else:
-            tagged_objs = list(CQLinq.select_tagged(self.workplane, tags, resolve_type))
-            tagged_cq_type = CQ_TYPE_STR_MAPPING[type(tagged_objs[0])]
+            tagged_objs = list(CQLinq.select_tagged(self.workplane, tags, shape_type))
+            tagged_cq_type = SHAPE_TYPE_STR_MAPPING[type(tagged_objs[0])]
             workplane_objs = CQLinq.select(self.workplane, tagged_cq_type)
             filtered_objs = CQLinq.filter(workplane_objs, tagged_objs, invert)
             self.workplane = self.workplane.newObject(filtered_objs)
+        return self
+
+    def connected(self, shape_type: ShapeType, include_child_shape=False):
+        if len(self.workplane.objects) > 1:
+            raise NotImplementedError("Only one object workplane supported yet")
+        explorer = ConnectedShapesExplorer(self.workplane.findSolid(), self.workplane.val())
+        objs = explorer.search(shape_type, include_child_shape)
+        self.workplane = self.workplane.newObject(objs)
         return self
 
     def tag(self, names: Union[str, Sequence[str]]):
@@ -362,7 +377,7 @@ class GeometryQL:
         else:
             ratio = ratio or 1.0
             assert num_layers is not None and size is not None and ratio is not None, "num_layers, hwall_n and ratio must be specified for unstructured boundary layer"
-            if CQ_TYPE_RANKING[type(self.workplane.val())] < CQ_TYPE_RANKING[cq.Face]:
+            if SHAPE_TYPE_RANKING[type(self.workplane.val())] < SHAPE_TYPE_RANKING[cq.Face]:
                 boundary_layer = UnstructuredBoundaryLayer2D(self.vals(), ratio, size, num_layers)
             else:
                 boundary_layer = UnstructuredBoundaryLayer(self.vals(), ratio, size, num_layers)
