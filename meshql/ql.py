@@ -19,9 +19,7 @@ from meshql.visualizer import visualize_mesh
 from jupyter_cadquery import show
 
 class GeometryQL:
-    def __init__(self, use_cache: bool = False, split_at: SplitAt = "end") -> None:
-        self.use_cache = use_cache
-        self.split_at = split_at
+    def __init__(self) -> None:
         self._ctx = TransactionContext()
         self.is_structured = False
         self._transfinite_edge_groups = list[set[cq.Edge]]()
@@ -39,17 +37,22 @@ class GeometryQL:
             self, 
             target: Union[cq.Workplane, str, Iterable[CQObject]], 
             on_split: Optional[Callable[[Split], Split]] = None,
-            use_raycast:Optional[bool] = None
+            ray_tol: Optional[float] = None,
+            use_cache: bool = False,
+
         ):
         workplane = CQExtensions.import_workplane(target)
+
         # extrudes 2D shapes to 3D
         is_2d = CQExtensions.get_dimension(workplane) == 2
         if is_2d:
             workplane = workplane.extrude(-1)
 
         if on_split:
-            split = Split(workplane, cast(SplitAt, self.split_at), self.use_cache)
-            workplane = on_split(split).finalize().workplane
+            split = Split(workplane, use_cache, ray_tol)
+            workplane = on_split(split).apply_pending_splits().workplane
+
+        self.type_groups = CQLinq.groupByTypes(workplane, ray_tol=ray_tol)
 
         if is_2d:
             # fuses top faces to appear as one Compound in GMSH
@@ -57,10 +60,7 @@ class GeometryQL:
             fused_face = CQExtensions.fuse_shapes(faces)
             workplane = cq.Workplane(fused_face)
         
-        use_raycast = use_raycast or on_split is not None
-
         self.workplane = self.initial_workplane = workplane
-        self.type_groups = CQLinq.groupByTypes(self.workplane, use_raycast=use_raycast)
 
         topods = workplane.toOCC()
         gmsh.model.occ.importShapesNativePointer(topods._address())
@@ -229,11 +229,10 @@ class GeometryQL:
     def setTransfiniteFace(self, arrangement: TransfiniteArrangementType = "Left"):
         self.is_structured = True    
         cq_face_batch = CQLinq.select_batch(self.workplane, "solid", "face")
-        for i, cq_faces in enumerate(cq_face_batch):
+        for cq_faces in cq_face_batch:
             faces = self._entity_ctx.select_many(cq_faces)
             set_transfinite_faces = [SetTransfiniteFace(face, arrangement) for face in faces]
             self._ctx.add_transactions(set_transfinite_faces)
-
         return self
 
     def setTransfiniteSolid(self):
@@ -301,11 +300,6 @@ class GeometryQL:
             set_transfinite_edges = [SetTransfiniteEdge(edge, group_max_num_nodes) for edge in group_edges]
             self._ctx.add_transactions(set_transfinite_edges)
 
-
-    def addTransaction(self, toTransaction: Callable[["GeometryQL"], Transaction]):
-        self._ctx.add_transaction(toTransaction(self))
-        return self
-
     def setTransfiniteAuto(
         self,
         max_nodes: int,
@@ -325,10 +319,6 @@ class GeometryQL:
                 self._ctx.add_transaction(set_transfinite_solid)
             cq_faces = list(CQLinq.select(self.workplane, "face"))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
-
-        # transfinite_auto = SetTransfiniteAuto()
-        # self._ctx.add_transaction(transfinite_auto)
-
 
         if auto_recombine:
             self.recombine()
@@ -361,6 +351,10 @@ class GeometryQL:
 
             elif cq_curr_edge_vertices[-1] in boundary_vertices and cq_curr_edge_vertices[0] not in boundary_vertices:
                 transaction.coef = -edge_ratio
+
+    def addTransaction(self, toTransaction: Callable[["GeometryQL"], Transaction]):
+        self._ctx.add_transaction(toTransaction(self))
+        return self
 
     def addBoundaryLayer(self, size: float, ratio: Optional[float] = None, num_layers: Optional[int] = None, auto_recombine: bool = True):
         if self.is_structured:
@@ -398,7 +392,7 @@ class GeometryQL:
         show(self.workplane.newObject(group), theme="dark")
         return self
 
-    def show(self, type: Literal["gmsh", "mesh", "cq", "plot"] = "cq", theme: Literal["light", "dark"]="light", only_markers: bool = False):
+    def show(self, type: Literal["gmsh", "mesh", "cq", "plot"] = "cq", theme: Literal["light", "dark"]="light", only_faces: bool = False, only_markers: bool = False):
         if type == "gmsh":
             is_dark = theme == "dark"
             background_color = 0 if is_dark else 255
@@ -415,14 +409,19 @@ class GeometryQL:
             CQExtensions.plot_cq(self.workplane, ctx=self._entity_ctx)
         elif type == "cq":
             try:
-                show(self.workplane, theme=theme)
+                if only_faces:
+                    root_assembly = cq.Assembly()
+                    for i, face in enumerate(self.workplane.faces().vals()):
+                        root_assembly.add(cq.Workplane(face), name=f"face/{i}")
+                    show(root_assembly, theme=theme)
+                else:
+                    show(self.workplane, theme=theme)
             except:
                 logger.warn("inadequate CQ geometry, trying to display in GMSH ...")
                 self.show("gmsh", theme)
         else:
             raise NotImplementedError(f"Unknown show type {type}")
         return self
-
 
     def close(self):
         gmsh.finalize()

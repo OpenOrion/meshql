@@ -15,7 +15,8 @@ from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
-from jupyter_cadquery import show
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.TopAbs import TopAbs_State
 
 CQType = Literal["compound", "solid", "shell", "face", "wire", "edge", "vertex"]
 CQGroupTypeString = Literal["split", "interior", "exterior"]
@@ -139,7 +140,8 @@ class CQLinq:
     @staticmethod
     def find_nearest(
         target: Union[cq.Workplane, CQObject, Sequence[CQObject]], 
-        near_shape: cq.Shape, tolerance: Optional[float] = None, 
+        near_shape: cq.Shape, 
+        tolerance: Optional[float] = None, 
         excluded: Optional[Sequence[CQObject]] = None,
         select_type: Optional[CQType] = None
     ):
@@ -189,11 +191,9 @@ class CQLinq:
     def groupByTypes(
         target: Union[cq.Workplane, Sequence[CQObject]], 
         only_faces=False, 
-        split_tol = 1E-5,
-        use_raycast: bool = True,
+        ray_tol: Optional[float] = None
     ): 
         workplane = target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
-
         add_wire_to_group = lambda wires, group: group.update([
             *wires,
             *CQLinq.select(wires, "edge"),
@@ -215,40 +215,10 @@ class CQLinq:
                 add_wire_to_group(face.innerWires(), groups["interior"])
                 add_wire_to_group([face.outerWire()], groups["exterior"])
         else:
-            inner_edges = OrderedSet[tuple]()
-
-            if not use_raycast:
-                for face in workplane.faces().vals():
-                    assert isinstance(face, cq.Face), "object must be a face"
-                    for innerWire in face.innerWires():
-                        inner_edges.update([edge.Center().toTuple() for edge in innerWire.Edges()])
-
             for solid in workplane.solids().vals():
                 for face in solid.Faces():
-                    if use_raycast:
-                        maxDim = workplane.findSolid().BoundingBox().DiagonalLength
-                        nearest_center_gp_point = GeomAPI_ProjectPointOnSurf(face.Center().toPnt(), face._geomAdaptor()).NearestPoint()                
-                        face_center = cq.Vector(nearest_center_gp_point.X(), nearest_center_gp_point.Y(), nearest_center_gp_point.Z())
-                        face_normal = face.normalAt(face_center)
-                        normalized_face_normal = face_normal/face_normal.Length
-
-                        intersect_line = cq.Edge.makeLine(face_center, face_center + (normalized_face_normal*maxDim))
-                        intersected_vertices = workplane.intersect(cq.Workplane(intersect_line)).vertices().vals()
-
-                        is_interior = len(intersected_vertices) != 0
-                        is_split = is_interior and intersected_vertices[0].distance(face) < split_tol
-                    else:
-                        is_split = False
-                        is_interior = False
-                        for edge in face.outerWire().Edges():
-                            if edge.Center().toTuple() in inner_edges:
-                                is_interior = True
-                                break
-
-                    if is_split:
-                        face_registry = groups["split"]
-                    else:
-                        face_registry = groups["interior" if is_interior else "exterior"]
+                    face_group_type = CQExtensions.get_face_group_type(solid, face, ray_tol)
+                    face_registry = groups[face_group_type]
 
                     
                     face_registry.add(face)
@@ -284,6 +254,29 @@ class CQLinq:
                 yield cq_obj
 
 class CQExtensions:
+    @staticmethod
+    def get_face_group_type(object: CQObject, face: cq.Face, ray_tol: Optional[float] = None) -> CQGroupTypeString:
+        maxDim = object.BoundingBox().DiagonalLength
+        ray_tol = ray_tol or maxDim*0.005
+        is_planar = face.geomType() == "PLANE"
+        if is_planar:
+            face_center = face.Center()
+            face_normal = face.normalAt()
+        else:
+            nearest_center_gp_point = GeomAPI_ProjectPointOnSurf(face.Center().toPnt(), face._geomAdaptor()).NearestPoint()                
+            face_center = cq.Vector(nearest_center_gp_point.X(), nearest_center_gp_point.Y(), nearest_center_gp_point.Z())
+            face_normal = face.normalAt(face_center)
+        normalized_face_normal = face_normal/face_normal.Length
+        
+        intersect_line = cq.Edge.makeLine(face_center, face_center + (normalized_face_normal*maxDim))
+        intersected_vertices = object.intersect(intersect_line).Vertices()
+        is_interior = len(intersected_vertices) != 0
+        is_split = is_interior and intersected_vertices[0].distance(face) < ray_tol
+
+        if is_split:
+            return "split"
+        return "interior" if is_interior else "exterior"
+
     @staticmethod
     def is_interior_face(face: CQObject, invert: bool = False):
         assert isinstance(face, cq.Face), "object must be a face"

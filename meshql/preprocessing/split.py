@@ -8,37 +8,40 @@ from meshql.utils.types import Axis, LineTuple, OrderedSet, VectorSequence, to_2
 from jupyter_cadquery import show
 
 SplitAt = Literal["end", "per"]
+SnapType =  Union[bool, Literal["closest"]]
 MultiFaceAxis = Union[Axis, Literal["avg", "face1", "face2"]]
 def normalize(vec: cq.Vector):
     return vec / vec.Length
 
 class Split:
-    def __init__(self, workplane: cq.Workplane, split_at: SplitAt, use_cache: bool = False) -> None:
+    def __init__(self, workplane: cq.Workplane, use_cache: bool = False, ray_tol: Optional[float] = None) -> None:
         self.workplane = self.initial_workplane = workplane
-        self.split_at = split_at
         self.use_cache = use_cache
-        self.split_groups = list[list[cq.Face]]()
+        self.ray_tol = ray_tol
+        self.pending_splits = list[list[cq.Face]]()
         self.maxDim = workplane.findSolid().BoundingBox().DiagonalLength * 10
-
-    def refresh(self, use_raycast=False):
-        self.type_groups = CQLinq.groupByTypes(self.workplane, use_raycast=use_raycast)
+        self.type_groups = None
+        self.sync_splits()
+    
+    def sync_splits(self, update_type_groups: bool = False):
+        self.apply_pending_splits()
+        if update_type_groups:
+            self.type_groups = CQLinq.groupByTypes(self.workplane, ray_tol=self.ray_tol)
         self.face_edge_groups = CQLinq.groupBy(self.workplane, "face", "edge")
 
-    def apply_split(self, split_shapes: Union[cq.Shape, Sequence[cq.Shape]]):
+    def push_split(self, split_shapes: Union[cq.Shape, Sequence[cq.Shape]]):
         split_shapes = [split_shapes] if isinstance(split_shapes, cq.Shape) else list(split_shapes)
-        self.split_groups += [split_shapes]
-        if self.split_at == "per":
-            self.workplane = split_workplane(self.workplane, split_shapes, self.use_cache)
+        self.pending_splits += [split_shapes]
 
-    def finalize(self):
-        if self.split_at == "end":
-            split_faces = [face for split_face_group in self.split_groups for face in split_face_group]
-            self.workplane = split_workplane(self.workplane, split_faces, self.use_cache)
+    def apply_pending_splits(self):
+        split_faces = [split_face for split_face_group in self.pending_splits for split_face in split_face_group]
+        self.workplane = split_workplane(self.workplane, split_faces, self.use_cache)
+        self.pending_splits = []
         return self
 
     def show(self, theme: Literal["light", "dark"] = "light"):
-        assert len(self.split_groups) > 0, "No split faces to show"
-        show(self.workplane.newObject(self.split_groups[-1]), theme=theme)
+        assert len(self.pending_splits) > 0, "No split faces to show"
+        show(self.workplane.newObject(self.pending_splits[-1]), theme=theme)
         return self
 
     def from_plane(
@@ -48,7 +51,7 @@ class Split:
         sizing: Literal["maxDim", "infinite"] = "maxDim"
     ):
         split_face = get_plane_split_face(self.workplane, base_pnt, angle, sizing)
-        self.apply_split(split_face)
+        self.push_split(split_face)
         return self
     
     def from_ratios(
@@ -57,24 +60,23 @@ class Split:
         end: Selection,
         ratios: list[float],
         dir: Literal["away", "towards", "both"],
-        axis: Optional[Axis] = None,
-        snap_tolerance: Optional[float] = None,
+        snap: SnapType = False,
         angle_offset: VectorSequence = (0,0,0),
     ):
-        self.refresh(use_raycast=True)
+
+        if snap != False and len(self.pending_splits) > 0 or (start.type is not None or end.type is not None):
+            self.sync_splits(update_type_groups=True)
+
         offset = to_vec(np.radians(list(angle_offset)))
         start_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], start.select(self, "edge", is_intersection=True)))
         end_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], end.select(self, "edge", is_intersection=True)))
+
 
         for ratio in ratios:
             start_point = start_wire.positionAt(ratio)
             end_point = end_wire.positionAt(0.5-ratio if ratio <=0.5 else 1.5-ratio)
             edge = cq.Edge.makeLine(start_point, end_point)
 
-            # if axis:
-            #     dir = dir or "towards"
-            #     normal_vec = to_vec(axis) + offset
-            # else:
             if start.type and start.type == end.type:
                 target = self.type_groups[start.type]
             else:
@@ -84,7 +86,7 @@ class Split:
             normal_vec = normalize(nearest_face.normalAt((start_point + end_point)/2)) + offset
             projected_edge = edge.project(nearest_face, normal_vec).Edges()[0]
             assert isinstance(projected_edge, cq.Edge), "Projected edge is single edge"
-            self.from_edge(projected_edge, normal_vec, dir, snap_tolerance)
+            self.from_edge(projected_edge, normal_vec, dir, snap)
 
         return self
 
@@ -94,13 +96,13 @@ class Split:
         selection: Selection,
         dir: Optional[Literal["away", "towards", "both"]] = None,
         axis: Union[MultiFaceAxis, list[MultiFaceAxis]] = "avg",
-        snap_tolerance: Optional[float] = None,
+        snap: SnapType = False,
         angle_offset: VectorSequence = (0,0,0),
         is_initial: bool = False,
     ):
-        self.refresh(use_raycast=True)
+        if snap != False and len(self.pending_splits) > 0:
+            self.sync_splits(update_type_groups=True)
         offset = to_vec(np.radians(list(angle_offset)))
-        dir = dir or "away" if selection.type == "interior" else "towards"        
         filtered_edges = cast(Sequence[cq.Edge], selection.select(self, "edge", is_initial=is_initial, is_exclusive=True))
 
         split_faces = list[cq.Shape]()
@@ -109,8 +111,13 @@ class Split:
             faces = self.face_edge_groups[edge]
             split_face = None
             for _axis in (axis if isinstance(axis, list) else [axis]):
+                if not isinstance(_axis, str) and dir is None:
+                    dir = "towards"
+                else:
+                    dir = dir or "away" if selection.type == "interior" else "towards"        
+
                 normal_vec = self._get_normal_vec(faces, cast(Axis, _axis), offset)
-                curr_split_face = get_edge_split_face(self.workplane, edge, normal_vec, dir, snap_tolerance, snap_edges)
+                curr_split_face = get_edge_split_face(self.workplane, edge, normal_vec, dir, snap, snap_edges)
                 if split_face is None:
                     split_face = curr_split_face
                 else:
@@ -118,7 +125,7 @@ class Split:
             assert split_face, "No split face found"
             split_faces.append(split_face)
 
-        self.apply_split(split_faces)
+        self.push_split(split_faces)
         return self
 
     def from_anchor(
@@ -147,7 +154,7 @@ class Split:
     def from_pnts(self, pnts: Sequence[VectorSequence]):
         pnt_vecs = [to_vec(pnt) for pnt in pnts]
         split_face = cq.Face.makeFromWires(cq.Wire.makePolygon(pnt_vecs))
-        self.apply_split(split_face)
+        self.push_split(split_face)
         return self
 
     def from_edge(
@@ -155,10 +162,10 @@ class Split:
         edge: cq.Edge, 
         axis: Axis = "Z",
         dir: Literal["away", "towards", "both"] = "both",
-        snap_tolerance: Optional[float] = None,
+        snap: SnapType = False
     ):
-        split_face = get_edge_split_face(self.workplane, edge, axis, dir, snap_tolerance)
-        self.apply_split(split_face)
+        split_face = get_edge_split_face(self.workplane, edge, axis, dir, snap)
+        self.push_split(split_face)
         return self
 
     def from_lines(
@@ -261,7 +268,7 @@ def get_edge_split_face(
         edge: cq.Edge, 
         axis: Axis = "Z",
         dir: Literal["away", "towards", "both"] = "both",
-        snap_tolerance: Optional[float] = None,
+        snap: Union[bool, Literal["closest"]] = False,
         snap_edges = OrderedSet[cq.Edge]()
     ):
         maxDim = workplane.findSolid().BoundingBox().DiagonalLength * 10
@@ -275,7 +282,8 @@ def get_edge_split_face(
         elif dir in ("towards", "away"):
             split_face = get_split_face_from_edges(edge, towards_edge if dir == "towards" else away_edge)
 
-        if snap_tolerance:
+        if snap != False:
+            snap_tolerance = snap if isinstance(snap, float) else None
             intersected_edges = workplane.intersect(cq.Workplane(split_face)).edges().vals()
             if len(intersected_edges) > 0:
                 closest_intersection_edge = CQLinq.find_nearest(intersected_edges, edge)
