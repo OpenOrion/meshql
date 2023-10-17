@@ -193,6 +193,7 @@ class CQLinq:
         max_dim: float,
         tol: Optional[float] = None,
         prev_groups: Optional[dict[CQGroupTypeString, OrderedSet[CQObject]]] = None,
+        check_splits: bool = True,
         only_faces=False, 
     ): 
         workplane = target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
@@ -207,8 +208,17 @@ class CQLinq:
             "interior": OrderedSet[CQObject](),
             "exterior": OrderedSet[CQObject](),
         }
+
         is_2d = CQExtensions.get_dimension(workplane) == 2
         workplane = workplane.extrude(-1) if is_2d else workplane
+
+        inner_edges = OrderedSet[tuple]()
+        if not check_splits:
+            for face in workplane.faces().vals():
+                assert isinstance(face, cq.Face), "object must be a face"
+                for innerWire in face.innerWires():
+                    inner_edges.update([edge.Center().toTuple() for edge in innerWire.Edges()])
+
         for solid in workplane.solids().vals():
             for face in solid.Faces():
                 face_group = None
@@ -219,7 +229,14 @@ class CQLinq:
                             break
                 
                 if face_group is None:
-                    face_group_type = CQExtensions.get_face_group_type(workplane, face, max_dim, tol)
+                    if check_splits:
+                        face_group_type = CQExtensions.get_face_group_type(workplane, face, max_dim, tol)
+                    else:
+                        face_group_type = "exterior"
+                        for edge in face.outerWire().Edges():
+                            if edge.Center().toTuple() in inner_edges:
+                                face_group_type = "interior"
+                                break
                     face_group = groups[face_group_type]
 
                 face_group.add(face)
@@ -276,12 +293,13 @@ class CQExtensions:
         maxDim: float, 
         tol: Optional[float] = None
     ) -> CQGroupTypeString:
+        is_split = False
         total_solid = workplane.findSolid()
         is_planar = face.geomType() == "PLANE"
         if is_planar:
             face_center, face_normal = face.Center(), face.normalAt()
             normalized_face_normal = face_normal/face_normal.Length
-            is_interior = is_split = CQExtensions.is_interior_face(face)
+            is_interior = CQExtensions.is_interior_face(face)
             if is_interior:
                 intersect_line = cq.Edge.makeLine(face_center, face_center + (normalized_face_normal*0.1))
                 intersect_vertices = total_solid.intersect(intersect_line, tol=tol).Vertices()

@@ -40,6 +40,7 @@ class GeometryQL:
             on_split: Optional[Callable[[Split], Split]] = None,
             max_dim: Optional[float] = None,
             tol: Optional[float] = None,
+            check_splits: Optional[bool] = None,
             use_cache: bool = False,
 
         ):
@@ -56,8 +57,9 @@ class GeometryQL:
             workplane = on_split(split).apply().workplane
 
         max_dim = max_dim or workplane.findSolid().BoundingBox().DiagonalLength * 10
+        check_splits = (split is not None) or not(not check_splits)
         prev_groups = split.type_groups if split else None
-        self.type_groups = CQLinq.groupByTypes(workplane, max_dim, tol, prev_groups)
+        self.type_groups = CQLinq.groupByTypes(workplane, max_dim, tol, prev_groups, check_splits)
 
         if is_2d:
             # fuses top faces to appear as one Compound in GMSH
@@ -136,11 +138,12 @@ class GeometryQL:
         return self
 
     def connected(self, shape_type: ShapeType, include_child_shape=False):
-        if len(self.workplane.objects) > 1:
-            raise NotImplementedError("Only one object workplane supported yet")
-        explorer = ConnectedShapesExplorer(self.workplane.findSolid(), self.workplane.val())
-        objs = explorer.search(shape_type, include_child_shape)
-        self.workplane = self.workplane.newObject(objs)
+        all_objs = []
+        for obj in self.workplane.vals():
+            explorer = ConnectedShapesExplorer(self.workplane.findSolid(), obj)
+            objs = explorer.search(shape_type, include_child_shape)
+            all_objs += objs
+        self.workplane = self.workplane.newObject(all_objs)
         return self
 
     def tag(self, names: Union[str, Sequence[str]]):
@@ -427,7 +430,7 @@ class GeometryQL:
                 if only_faces:
                     root_assembly = cq.Assembly()
                     for i, face in enumerate(self.workplane.faces().vals()):
-                        root_assembly.add(cq.Workplane(face), name=f"face/{i}")
+                        root_assembly.add(cq.Workplane(face), name=f"face/{i+1}")
                     show(root_assembly, theme=theme)
                 else:
                     show(self.workplane, theme=theme)
