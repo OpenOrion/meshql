@@ -413,7 +413,7 @@ class GeometryQL:
     def show(self, type: Literal["gmsh", "mesh", "cq", "plot"] = "cq", theme: Literal["light", "dark"]="light", only_faces: bool = False, only_markers: bool = False):
         if type == "gmsh":
             is_dark = theme == "dark"
-            background_color = 0 if is_dark else 255
+            background_color = 35 if is_dark else 255
             gmsh.option.set_number("General.FltkColorScheme", is_dark)
             gmsh.option.set_color("General.Color.Background", background_color, background_color, background_color) 
             gmsh.option.set_color("General.Color.Foreground", background_color, background_color, background_color) 
