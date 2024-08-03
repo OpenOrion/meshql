@@ -371,7 +371,7 @@ class GeometryQL:
             if CQ_TYPE_RANKING[type(self._workplane.val())] < CQ_TYPE_RANKING[cq.Face]:
                 boundary_layer = UnstructuredBoundaryLayer2D(self.vals(), ratio, size, num_layers)
             else:
-                boundary_layer = UnstructuredBoundaryLayer(self.vals(), ratio, size, num_layers)
+                boundary_layer = UnstructuredBoundaryLayer(self.vals(), ratio, -size, num_layers)
                 if auto_recombine:
                     self.recombine()
             self._ctx.add_transaction(boundary_layer)
