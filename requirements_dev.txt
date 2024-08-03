@@ -1,5 +1,5 @@
 plotly==5.11.0
-ipywidgets==7.6
+ipywidgets
 jupyterlab
 matplotlib
 
@@ -11,3 +11,5 @@ shapely
 scipy
 ipython_genutils
 jupyter_cadquery
+plotly
+git+https://github.com/bernhard-42/jupyter-cadquery.git

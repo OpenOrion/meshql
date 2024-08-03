@@ -18,6 +18,7 @@ setup(
     "su2fmt @ git+https://github.com/Turbodesigner/su2fmt.git",
     "shapely",
     "scipy",
-    "jupyter_cadquery"
+    "jupyter_cadquery @ git+https://github.com/bernhard-42/jupyter-cadquery.git",
+    "plotly"
    ]
 )
