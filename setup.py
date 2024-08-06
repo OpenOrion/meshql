@@ -12,7 +12,7 @@ setup(
    install_requires=[
     "numpy",
     "gmsh",
-    "ipywidgets==7.6",
+    "ipywidgets",
     "ipython_genutils",
     "pythreejs==2.4.2",
     "su2fmt @ git+https://github.com/Turbodesigner/su2fmt.git",
