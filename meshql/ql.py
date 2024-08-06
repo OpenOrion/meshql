@@ -9,7 +9,7 @@ from meshql.preprocessing.split import split_workplane
 from meshql.transaction import Transaction, TransactionContext
 from meshql.transactions.algorithm import MeshAlgorithm2DType, MeshAlgorithm3DType, MeshSubdivisionType, SetMeshAlgorithm2D, SetMeshAlgorithm3D, SetSubdivisionAlgorithm
 from meshql.transactions.boundary_layer import UnstructuredBoundaryLayer, UnstructuredBoundaryLayer2D, get_boundary_ratio
-from meshql.transactions.physical_group import SetPhysicalGroup
+from meshql.transactions.physical_group import BoundaryCondition, SetPhysicalGroup
 from meshql.transactions.refinement import Recombine, Refine, SetMeshSize, SetSmoothing
 from meshql.transactions.transfinite import SetTransfiniteEdge, SetTransfiniteFace, SetTransfiniteSolid, TransfiniteArrangementType, TransfiniteMeshType
 from meshql.mesh.exporters import export_to_su2
@@ -26,6 +26,7 @@ class GeometryQL:
         self._ctx = TransactionContext()
         self.is_structured = False
         self._transfinite_edge_groups = list[set[cq.Edge]]()
+        self.boundary_conditions = dict[str, BoundaryCondition]()
     def __enter__(self):
         gmsh.initialize()
         return self
@@ -140,11 +141,11 @@ class GeometryQL:
             self._workplane = self._workplane.newObject(filtered_objs)
         return self
 
-    def addPhysicalGroup(self, group: Union[str, Sequence[str]]):
+    def addPhysicalGroup(self, group: Union[str, Sequence[str], BoundaryCondition]):
         if  isinstance(group, str):
             set_physical_group = SetPhysicalGroup(self.vals(), group)
             self._ctx.add_transaction(set_physical_group)
-        else:
+        elif isinstance(group, Sequence):
             objs = list(self.vals())
             group_entities: dict[str, OrderedSet[Entity]] = {}
 
@@ -157,6 +158,11 @@ class GeometryQL:
             for group_name, group_objs in group_entities.items():
                 set_physical_group = SetPhysicalGroup(group_objs, group_name)
                 self._ctx.add_transaction(set_physical_group)
+        else:
+            set_physical_group = SetPhysicalGroup(self.vals(), group.label)
+            self._ctx.add_transaction(set_physical_group)
+            assert group.label not in self.boundary_conditions, f"Boundary condition {group.label} must added already"
+            self.boundary_conditions[group.label] = group
 
         return self
 

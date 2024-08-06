@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
    name='meshql',
-   version='1.0.0',
+   version='1.1.0',
    description='query based meshing on top of GMSH',
    author='Afshawn Lotfi',
    author_email='',
@@ -19,6 +19,6 @@ setup(
     "shapely",
     "scipy",
     "jupyter_cadquery @ git+https://github.com/bernhard-42/jupyter-cadquery.git",
-    "plotly"
+    "plotly",
    ]
 )
