@@ -1,9 +1,12 @@
+from typing import Protocol
 import gmsh
 from dataclasses import dataclass
 from meshql.entity import Entity
 from meshql.transaction import MultiEntityTransaction
 from meshql.utils.types import OrderedSet
 
+class BoundaryCondition(Protocol):
+    label: str
 
 @dataclass(eq=False)
 class SetPhysicalGroup(MultiEntityTransaction):
