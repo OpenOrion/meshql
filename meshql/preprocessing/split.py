@@ -4,7 +4,7 @@ from cadquery.cq import VectorLike
 from typing import Literal, Optional, Sequence, Union
 from meshql.utils.cq import CQCache, CQExtensions, CQLinq
 from meshql.utils.types import LineTuple, VectorTuple
-from jupyter_cadquery import show
+
 Axis = Union[Literal["X", "Y", "Z"], VectorTuple, cq.Vector]
 def get_normal_from_axis(axis: Axis):
     if isinstance(axis, str):

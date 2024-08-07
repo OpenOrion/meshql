@@ -16,7 +16,6 @@ from meshql.mesh.exporters import export_to_su2
 from meshql.utils.cq import CQ_TYPE_RANKING, CQ_TYPE_STR_MAPPING, CQExtensions, CQGroupTypeString, CQLinq, CQType
 from meshql.utils.types import OrderedSet
 from meshql.visualizer import visualize_mesh
-from jupyter_cadquery import show
 
 class GeometryQL:
     _workplane: cq.Workplane
@@ -141,11 +140,8 @@ class GeometryQL:
             self._workplane = self._workplane.newObject(filtered_objs)
         return self
 
-    def addPhysicalGroup(self, group: Union[str, Sequence[str], BoundaryCondition]):
-        if  isinstance(group, str):
-            set_physical_group = SetPhysicalGroup(self.vals(), group)
-            self._ctx.add_transaction(set_physical_group)
-        elif isinstance(group, Sequence):
+    def addPhysicalGroup(self, group: Union[str, Sequence[str], BoundaryCondition, Callable[[int, cq.Face], BoundaryCondition]]):
+        if isinstance(group, Sequence):
             objs = list(self.vals())
             group_entities: dict[str, OrderedSet[Entity]] = {}
 
@@ -158,11 +154,27 @@ class GeometryQL:
             for group_name, group_objs in group_entities.items():
                 set_physical_group = SetPhysicalGroup(group_objs, group_name)
                 self._ctx.add_transaction(set_physical_group)
+        
         else:
-            set_physical_group = SetPhysicalGroup(self.vals(), group.label)
+            if  isinstance(group, str):
+                group_label = group
+            elif isinstance(group, Callable):
+                for i, face in enumerate(self._workplane.vals()):
+                    assert isinstance(face, cq.Face), "Boundary condition must be applied to faces"
+                    group_val = group(i, face)
+                    group_label = group_val.label
+                    assert group_label not in self.boundary_conditions, f"Boundary condition {group_label} added already"
+                    self.boundary_conditions[group_label] = group_val
+            else:
+                group_label = group.label
+                assert group.label not in self.boundary_conditions, f"Boundary condition {group.label} added already"
+                self.boundary_conditions[group.label] = group
+
+            set_physical_group = SetPhysicalGroup(self.vals(), group_label)
             self._ctx.add_transaction(set_physical_group)
-            assert group.label not in self.boundary_conditions, f"Boundary condition {group.label} must added already"
-            self.boundary_conditions[group.label] = group
+
+
+
 
         return self
 
@@ -401,7 +413,10 @@ class GeometryQL:
         assert self.is_structured, "Structured boundary layer can only be applied after setTransfiniteAuto"
         assert group_index < len(self._transfinite_edge_groups), f"Group index {group_index} is out of range"
         group = self._transfinite_edge_groups[group_index]
+        
+        from jupyter_cadquery import show
         show(self._workplane.newObject(group), theme="dark")
+        
         return self
 
     def show(self, type: Literal["gmsh", "mesh", "cq", "plot"] = "cq", only_markers: bool = False):
@@ -413,6 +428,7 @@ class GeometryQL:
         elif type == "plot":
             CQExtensions.plot_cq(self._workplane, ctx=self._entity_ctx)
         elif type == "cq":
+            from jupyter_cadquery import show
             show(self._workplane, theme="dark")
         else:
             raise NotImplementedError(f"Unknown show type {type}")

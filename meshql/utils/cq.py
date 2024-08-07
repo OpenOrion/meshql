@@ -14,7 +14,6 @@ from meshql.utils.types import OrderedSet, NumpyFloat
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
-from jupyter_cadquery import show
 
 CQType = Literal["compound", "solid", "shell", "face", "wire", "edge", "vertex"]
 CQGroupTypeString = Literal["split", "interior", "exterior"]

@@ -15,7 +15,7 @@ setup(
     "ipywidgets",
     "ipython_genutils",
     "pythreejs==2.4.2",
-    "su2fmt @ git+https://github.com/Turbodesigner/su2fmt.git",
+    "su2fmt @ git+https://github.com/OpenOrion/su2fmt.git",
     "shapely",
     "scipy",
     "jupyter_cadquery @ git+https://github.com/bernhard-42/jupyter-cadquery.git",
