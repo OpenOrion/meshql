@@ -3,15 +3,22 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 from meshql.entity import Entity, ENTITY_DIM_MAPPING
-from meshql.transaction import SingleEntityTransaction, MultiEntityTransaction, Transaction
+from meshql.gmsh.transaction import (
+    SingleEntityTransaction,
+    MultiEntityTransaction,
+    GmshTransaction,
+)
 from meshql.utils.types import OrderedSet
 
 TransfiniteArrangementType = Literal["Left", "Right", "AlternateLeft", "AlternateRight"]
 TransfiniteMeshType = Literal["Progression", "Bump", "Beta"]
 
+
 def get_num_nodes_for_ratios(total_num_nodes: int, ratios: Sequence[float]):
     assert np.round(np.sum(ratios), 5) == 1, "Ratios must sum to 1"
-    assert total_num_nodes > len(ratios), f"Number of nodes must be greater than number of ratios {len(ratios)}"
+    assert total_num_nodes > len(
+        ratios
+    ), f"Number of nodes must be greater than number of ratios {len(ratios)}"
     allocated_nodes = []
     for ratio in ratios:
         num_nodes = int(np.round(ratio * total_num_nodes)) or 1
@@ -24,14 +31,14 @@ def get_num_nodes_for_ratios(total_num_nodes: int, ratios: Sequence[float]):
         total_node_diff = num_allocated_nodes - total_num_nodes
         for i in descending_ratio_indexes:
             if allocated_nodes[i] > 1:
-                allocated_node_diff = int(np.ceil(total_node_diff*ratios[i]))
+                allocated_node_diff = int(np.ceil(total_node_diff * ratios[i]))
                 allocated_nodes[i] -= allocated_node_diff
                 num_allocated_nodes -= allocated_node_diff
             if num_allocated_nodes == total_num_nodes:
                 break
-    assert sum(allocated_nodes) == total_num_nodes, (
-        f"Number of allocated nodes must equal num_nodes, {num_allocated_nodes} != {total_num_nodes}"
-    )
+    assert (
+        sum(allocated_nodes) == total_num_nodes
+    ), f"Number of allocated nodes must equal num_nodes, {num_allocated_nodes} != {total_num_nodes}"
 
     return allocated_nodes
 
@@ -56,8 +63,9 @@ class SetTransfiniteEdge(SingleEntityTransaction):
     def before_gen(self):
         assert self.entity.type == "edge", "SetTransfiniteEdge only accepts edges"
         num_nodes = self.num_elems + 1
-        gmsh.model.mesh.setTransfiniteCurve(self.entity.tag, num_nodes, self.mesh_type, self.coef)
-
+        gmsh.model.mesh.setTransfiniteCurve(
+            self.entity.tag, num_nodes, self.mesh_type, self.coef
+        )
 
 
 @dataclass(eq=False)
@@ -74,7 +82,10 @@ class SetTransfiniteFace(SingleEntityTransaction):
     def before_gen(self):
         assert self.entity.type == "face", "SetTransfiniteFace only accepts faces"
         corner_tags = [corner.tag for corner in self.corners] if self.corners else []
-        gmsh.model.mesh.setTransfiniteSurface(self.entity.tag, self.arrangement, corner_tags)
+        gmsh.model.mesh.setTransfiniteSurface(
+            self.entity.tag, self.arrangement, corner_tags
+        )
+
 
 @dataclass(eq=False)
 class SetTransfiniteSolid(SingleEntityTransaction):
@@ -90,7 +101,6 @@ class SetTransfiniteSolid(SingleEntityTransaction):
         gmsh.model.mesh.setTransfiniteVolume(self.entity.tag, corner_tags)
 
 
-
 @dataclass(eq=False)
 class SetCompound(MultiEntityTransaction):
     entities: OrderedSet[Entity]
@@ -102,9 +112,9 @@ class SetCompound(MultiEntityTransaction):
 
 
 @dataclass(eq=False)
-class SetTransfiniteAuto(Transaction):
+class SetTransfiniteAuto(GmshTransaction):
 
     def before_gen(self):
-        gmsh.option.setNumber('Mesh.MeshSizeMin', 0.5)
-        gmsh.option.setNumber('Mesh.MeshSizeMax', 0.5)
+        gmsh.option.setNumber("Mesh.MeshSizeMin", 0.5)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", 0.5)
         gmsh.model.mesh.setTransfiniteAutomatic()

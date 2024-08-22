@@ -7,13 +7,14 @@ from meshql.mesh.importers import import_from_gmsh
 from meshql.mesh.mesh import Mesh
 from meshql.utils.types import OrderedSet
 
+
 @dataclass
-class Transaction:
+class GmshTransaction:
     def __post_init__(self):
         self.is_commited: bool = False
         self.is_generated: bool = False
         self.id = uuid.uuid4()
-    
+
     def before_gen(self):
         "completes transaction before mesh generation."
         ...
@@ -27,41 +28,50 @@ class Transaction:
 
     def __eq__(self, __value: object) -> bool:
         return self.id.__eq__(__value)
-    
 
 
 @dataclass(eq=False)
-class SingleEntityTransaction(Transaction):
+class SingleEntityTransaction(GmshTransaction):
     entity: Entity
     "The entity that transaction will be applied towards"
 
+
 @dataclass(eq=False)
-class MultiEntityTransaction(Transaction):
+class MultiEntityTransaction(GmshTransaction):
     entities: OrderedSet[Entity]
     "The entities that transaction will be applied towards"
 
 
-class TransactionContext:
+class GmshTransactionContext:
     def __init__(self):
-        self.entity_transactions = OrderedDict[tuple[type[Transaction], Entity], Transaction]()
-        self.system_transactions = OrderedDict[type[Transaction], Transaction]()
+        self.entity_transactions = OrderedDict[
+            tuple[type[GmshTransaction], Entity], GmshTransaction
+        ]()
+        self.system_transactions = OrderedDict[type[GmshTransaction], GmshTransaction]()
 
         self.mesh: Optional[Mesh] = None
-    
-    def get_transaction(self, transaction_type: type[Transaction], entity: Optional[Entity] = None) -> Optional[Transaction]:
+
+    def get_transaction(
+        self, transaction_type: type[GmshTransaction], entity: Optional[Entity] = None
+    ) -> Optional[GmshTransaction]:
         if entity is None:
             return self.system_transactions.get(transaction_type)
         else:
             return self.entity_transactions.get((transaction_type, entity))
 
-
-    def add_transaction(self, transaction: Transaction, ignore_duplicates: bool = False):
+    def add_transaction(
+        self, transaction: GmshTransaction, ignore_duplicates: bool = False
+    ):
         """
         transaction: Transaction - transaction to be added
         ignore_duplicates: bool = False - if True, will ignore duplicate entity transactions
         """
-        if isinstance(transaction, (SingleEntityTransaction, MultiEntityTransaction) ):
-            entities = transaction.entities if isinstance(transaction, MultiEntityTransaction) else OrderedSet([transaction.entity])
+        if isinstance(transaction, (SingleEntityTransaction, MultiEntityTransaction)):
+            entities = (
+                transaction.entities
+                if isinstance(transaction, MultiEntityTransaction)
+                else OrderedSet([transaction.entity])
+            )
             for entity in entities:
                 transaction_id = (type(transaction), entity)
                 if transaction_id not in self.entity_transactions:
@@ -75,7 +85,9 @@ class TransactionContext:
         else:
             self.system_transactions[type(transaction)] = transaction
 
-    def add_transactions(self, transactions: Sequence[Transaction], ignore_duplicates: bool = False):
+    def add_transactions(
+        self, transactions: Sequence[GmshTransaction], ignore_duplicates: bool = False
+    ):
         """
         transactions: Sequence[Transaction] - transactions to be added
         ignore_duplicates: bool = False - if True, will ignore duplicate entity transactions
@@ -85,10 +97,9 @@ class TransactionContext:
 
     def generate(self, dim: int = 3):
         gmsh.model.occ.synchronize()
-        transactions = OrderedSet([
-            *self.entity_transactions.values(),
-            * self.system_transactions.values()
-        ])
+        transactions = OrderedSet(
+            [*self.entity_transactions.values(), *self.system_transactions.values()]
+        )
         for transaction in transactions:
             transaction.before_gen()
 
@@ -96,7 +107,7 @@ class TransactionContext:
 
         for transaction in transactions:
             transaction.after_gen()
-        
+
         self.entity_transactions = OrderedDict()
         self.system_transactions = OrderedDict()
-        self.mesh = import_from_gmsh()
+        # self.mesh = import_from_gmsh()

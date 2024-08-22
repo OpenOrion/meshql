@@ -15,7 +15,8 @@ from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
 
-CQType = Literal["compound", "solid", "shell", "face", "wire", "edge", "vertex"]
+CQType2D = Literal["face", "wire", "edge", "vertex"]
+CQType = Union[Literal["compound", "solid", "shell"], CQType2D]
 CQGroupTypeString = Literal["split", "interior", "exterior"]
 CQEdgeOrFace = Union[cq.Edge, cq.Face]
 TShape = TypeVar('TShape', bound=cq.Shape)
