@@ -1,11 +1,10 @@
 import cadquery as cq
 from cadquery.cq import CQObject
-from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
-from cadquery.selectors import Selector
+from typing import Callable, Iterable, Literal, Optional, Sequence, Union
 from meshql.boundary_condition import BoundaryCondition
 from meshql.entity import CQEntityContext, Entity
-from meshql.preprocessing.split import split_workplane
 
+from meshql.selector import Selectable, Selection
 from meshql.utils.cq import (
     CQ_TYPE_STR_MAPPING,
     CQExtensions,
@@ -14,16 +13,18 @@ from meshql.utils.cq import (
     CQType,
 )
 from meshql.utils.types import OrderedSet
+from meshql.utils.logging import logger
 from meshql.visualizer import visualize_mesh
 
 ShowType = Literal["mesh", "cq", "plot"]
 
 
-class GeometryQL:
-    _workplane: cq.Workplane
-    _initial_workplane: cq.Workplane
-    _entity_ctx: CQEntityContext
-    _type_groups: Optional[dict[CQGroupTypeString, OrderedSet[CQObject]]] = None
+class GeometryQL(Selectable):
+    workplane: cq.Workplane
+    initial_workplane: cq.Workplane
+    entity_ctx: CQEntityContext
+    type_groups: Optional[dict[CQGroupTypeString, OrderedSet[CQObject]]] = None
+    refresh_type_groups: Callable[[], dict[CQGroupTypeString, OrderedSet[CQObject]]]
 
     @staticmethod
     def gmsh():
@@ -32,97 +33,68 @@ class GeometryQL:
         return GmshGeometryQL()
 
     def __init__(self) -> None:
-        self._initial_workplane = self._workplane = None  # type: ignore
+        self.initial_workplane = self.workplane = None  # type: ignore
         self.boundary_conditions = dict[str, BoundaryCondition]()
-        self._type_groups = None
-        self.is_2d = False
-
-    def get_obj_type(self, type: Optional[CQGroupTypeString] = None):
-        if type and self._type_groups is None:
-            self._type_groups = CQLinq.groupByTypes(
-                self._initial_workplane, exclude_split=self.is_2d
-            )
-            return self._type_groups[type]
-
+        self.type_groups = None
 
     def solids(
         self,
-        selector: Union[Selector, str, None] = None,
+        selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
         type: Optional[CQGroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
+        filter: Optional[Callable[[CQObject], bool]] = None,
     ):
-        obj_type = self.get_obj_type(type)
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.solids(selector, tag)
-        return self
-
-    def shells(
-        self,
-        selector: Union[Selector, str, None] = None,
-        tag: Union[str, None] = None,
-        type: Optional[CQGroupTypeString] = None,
-        indices: Optional[Sequence[int]] = None,
-    ):
-        obj_type = self.get_obj_type(type)
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.shells(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "solid"))
         return self
 
     def faces(
         self,
-        selector: Union[Selector, str, None] = None,
+        selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
         type: Optional[CQGroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
+        filter: Optional[Callable[[CQObject], bool]] = None,
     ):
-        obj_type = self.get_obj_type(type)
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.faces(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "face"))
         return self
 
     def edges(
         self,
-        selector: Union[Selector, str, None] = None,
+        selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
         type: Optional[CQGroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
+        filter: Optional[Callable[[CQObject], bool]] = None,
     ):
-        obj_type = self.get_obj_type(type)
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.edges(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "edge"))
         return self
 
     def wires(
         self,
-        selector: Union[Selector, str, None] = None,
+        selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
         type: Optional[CQGroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
+        filter: Optional[Callable[[CQObject], bool]] = None,
     ):
-        obj_type = self.get_obj_type(type)
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.wires(selector, tag)
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "wire"))
         return self
 
     def vertices(
         self,
-        selector: Union[Selector, str, None] = None,
+        selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
         type: Optional[CQGroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
+        filter: Optional[Callable[[CQObject], bool]] = None,
     ):
-        obj_type = self.get_obj_type(type)
-        selector = CQExtensions.get_selector(selector, obj_type, indices)
-        self._workplane = self._workplane.vertices(selector, tag)
-        return self
-
-    def tag(self, names: Union[str, Sequence[str]]):
-        if isinstance(names, str):
-            self._workplane.tag(names)
-        else:
-            for i, cq_obj in enumerate(self._workplane.vals()):
-                self._workplane.newObject([cq_obj]).tag(names[i])
+        selection = Selection(selector, tag, type, indices, filter)
+        self.workplane = self.workplane.newObject(selection.select(self, "vertex"))
         return self
 
     def fromTagged(
@@ -132,32 +104,37 @@ class GeometryQL:
         invert: bool = True,
     ):
         if isinstance(tags, str) and resolve_type is None:
-            self._workplane = self._workplane._getTagged(tags)
+            self.workplane = self.workplane._getTagged(tags)
         else:
-            tagged_objs = list(
-                CQLinq.select_tagged(self._workplane, tags, resolve_type)
-            )
+            tagged_objs = list(CQLinq.select_tagged(self.workplane, tags, resolve_type))
             tagged_cq_type = CQ_TYPE_STR_MAPPING[type(tagged_objs[0])]
-            workplane_objs = CQLinq.select(self._workplane, tagged_cq_type)
+            workplane_objs = CQLinq.select(self.workplane, tagged_cq_type)
             filtered_objs = CQLinq.filter(workplane_objs, tagged_objs, invert)
-            self._workplane = self._workplane.newObject(filtered_objs)
+            self.workplane = self.workplane.newObject(filtered_objs)
         return self
 
+    def tag(self, names: Union[str, Sequence[str]]):
+        if isinstance(names, str):
+            self.workplane.tag(names)
+        else:
+            for i, cq_obj in enumerate(self.workplane.vals()):
+                self.workplane.newObject([cq_obj]).tag(names[i])
+        return self
 
     def _after_load(self): ...
 
     def vals(self):
-        return self._entity_ctx.select_many(self._workplane)
+        return self.entity_ctx.select_many(self.workplane)
 
     def val(self):
-        return self._entity_ctx.select(self._workplane.val())
+        return self.entity_ctx.select(self.workplane.val())
 
     def _tag_workplane(self):
         "Tag all gmsh entity tags to workplane"
-        for cq_type, registry in self._entity_ctx.entity_registries.items():
+        for cq_type, registry in self.entity_ctx.entity_registries.items():
             for occ_obj in registry.keys():
                 tag = f"{cq_type}/{registry[occ_obj].tag}"
-                self._workplane.newObject([occ_obj]).tag(tag)
+                self.workplane.newObject([occ_obj]).tag(tag)
 
     @property
     def mesh(self): ...
@@ -165,17 +142,29 @@ class GeometryQL:
     def show(
         self,
         type: ShowType = "cq",
+        theme: Literal["light", "dark"] = "light",
+        only_faces: bool = False,
         only_markers: bool = False,
     ):
         if type == "mesh":
             assert self.mesh is not None, "Mesh is not generated yet."
             visualize_mesh(self.mesh, only_markers=only_markers)
         elif type == "plot":
-            CQExtensions.plot_cq(self._workplane, ctx=self._entity_ctx)
+            CQExtensions.plot_cq(self.workplane, ctx=self.entity_ctx)
         elif type == "cq":
             from jupyter_cadquery import show
 
-            show(self._workplane, theme="dark")
+            try:
+                if only_faces:
+                    root_assembly = cq.Assembly()
+                    for i, face in enumerate(self.workplane.faces().vals()):
+                        root_assembly.add(cq.Workplane(face), name=f"face/{i+1}")
+                    show(root_assembly, theme=theme)
+                else:
+                    show(self.workplane, theme=theme)
+            except:
+                logger.warn("inadequate CQ geometry, trying to display in GMSH ...")
+
         else:
             raise NotImplementedError(f"Unknown show type {type}")
         return self
@@ -204,7 +193,7 @@ class GeometryQL:
             if isinstance(group, str):
                 group_label = group
             elif isinstance(group, Callable):
-                for i, face in enumerate(self._workplane.vals()):
+                for i, face in enumerate(self.workplane.vals()):
                     assert isinstance(
                         face, cq.Face
                     ), "Boundary condition can only be applied to faces"

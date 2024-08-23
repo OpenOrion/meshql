@@ -1,10 +1,33 @@
-from typing import Iterable, Iterator, MutableSet, TypeVar, Union
+from typing import Iterable, Iterator, Literal, MutableSet, TypeVar, Union
 import numpy as np
+import cadquery as cq
 
 NumpyFloat = np.float32
 Number = Union[int, float, NumpyFloat]
-VectorTuple = Union[tuple[float, float, float], tuple[float, float]]
-LineTuple = tuple[VectorTuple, VectorTuple]
+VectorSequence = Union[tuple[Number, Number, Number], tuple[Number, Number], np.ndarray]
+VectorLike = Union[VectorSequence, cq.Vector]
+LineTuple = tuple[VectorSequence, VectorSequence]
+Axis = Union[Literal["X", "Y", "Z"], VectorSequence, cq.Vector]
+
+def to_array(vec: VectorLike):
+    if isinstance(vec, np.ndarray):
+        return vec
+    elif isinstance(vec, tuple):
+        return np.array(vec if len(vec) == 3 else (*vec, 0))
+    elif isinstance(vec, cq.Vector):
+        return np.array(vec.toTuple())
+
+def to_2d_array(vecs: Iterable[VectorLike]):
+    return [to_array(vec) for vec in vecs]
+
+def to_vec(axis: Axis):
+    if isinstance(axis, str):
+        return cq.Vector([1 if axis == "X" else 0, 1 if axis == "Y" else 0, 1 if axis == "Z" else 0])        
+    elif isinstance(axis, tuple):
+        return cq.Vector(axis)
+    elif isinstance(axis, np.ndarray):
+        return cq.Vector(tuple(axis))
+    return axis
 
 T = TypeVar("T")
 class OrderedSet(MutableSet[T]):
@@ -21,6 +44,21 @@ class OrderedSet(MutableSet[T]):
 
     def update(self, iterable: Iterable[T]) -> None:
         self._d.update(dict.fromkeys(iterable))
+
+    def difference(self, d: "OrderedSet") -> "OrderedSet[T]":
+        copy = OrderedSet(self)
+        copy -= d
+        return copy
+
+    def union(self, d: "OrderedSet") -> "OrderedSet[T]":
+        copy = OrderedSet(self)
+        copy |= d
+        return copy
+
+    def intersection(self, d: "OrderedSet") -> "OrderedSet[T]":
+        copy = OrderedSet(self)
+        copy &= d
+        return copy
 
     @property
     def first(self) -> T:
@@ -45,6 +83,3 @@ class OrderedSet(MutableSet[T]):
 
     def __repr__(self):
         return f"<OrderedSet {self}>"
-
-    # def __getitem__(self, index):
-    #     return list(self)[index]
