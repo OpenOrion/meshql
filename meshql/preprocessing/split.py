@@ -233,11 +233,11 @@ class Split(Selectable):
         dir: Literal["away", "towards", "both"] = "both",
     ):
         if isinstance(lines, tuple):
-            edges_pnts = np.array([to_2d_array(lines), to_2d_array(lines)])
+            edges_pnts = np.array([to_2d_array(lines), to_2d_array(lines)], dtype=np.float64)
         elif isinstance(lines, list) and len(lines) == 1:
-            edges_pnts = np.array([to_2d_array(lines[0]), to_2d_array(lines[0])])
+            edges_pnts = np.array([to_2d_array(lines[0]), to_2d_array(lines[0])], dtype=np.float64)
         else:
-            edges_pnts = np.array([to_2d_array(line) for line in lines])
+            edges_pnts = np.array([to_2d_array(line) for line in lines], dtype=np.float64)
         normal_vector = to_array(normalize(to_vec(axis)))
 
         if dir in ("both", "towards"):

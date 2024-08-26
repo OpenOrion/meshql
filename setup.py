@@ -8,7 +8,7 @@ setup(
    description='query based meshing on top of GMSH',
    author='Afshawn Lotfi',
    author_email='',
-   packages=['meshql', 'meshql.mesh', 'meshql.preprocessing', 'meshql.transactions', 'meshql.utils'],
+   packages=['meshql', 'meshql.mesh', 'meshql.preprocessing', 'meshql.gmsh', 'meshql.utils'],
    install_requires=[
     "numpy",
     "gmsh",
