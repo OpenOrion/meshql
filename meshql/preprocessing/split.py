@@ -104,8 +104,9 @@ class Split(Selectable):
         assert len(start_selection) > 0, "no selection for start present"
         assert len(end_selection) > 0, "no selection for end present"
 
-        start_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], start_selection))
-        end_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], end_selection))
+        start_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], CQLinq.sortByConnect(start_selection)))
+        end_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], CQLinq.sortByConnect(end_selection)))
+
 
         for ratio in ratios:
             start_point = start_wire.positionAt(ratio)

@@ -183,8 +183,9 @@ class CQLinq:
                 raise ValueError("Edges do not form a closed loop")
         
         assert sorted_paths[-1].end == sorted_paths[0].start, "Edges do not form a closed loop"
-        return sorted_paths
+        return [path.edge for path in sorted_paths]
     
+
 
 
 
