@@ -53,12 +53,6 @@ class GmshGeometryQL(GeometryQL):
     def __exit__(self, exc_type, exc_val, exc_tb):
         gmsh.finalize()
 
-    def end(self, num: Optional[int] = None):
-        if num is None:
-            self.workplane = self.initial_workplane
-        else:
-            self.workplane = self.workplane.end(num)
-        return self
 
     def load(
         self,

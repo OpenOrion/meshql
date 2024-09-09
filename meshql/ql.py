@@ -37,6 +37,10 @@ class GeometryQL(Selectable):
         self.boundary_conditions = dict[str, BoundaryCondition]()
         self.type_groups = None
 
+    def end(self, num: int = 1):
+        self.workplane = self.workplane.end(num)
+        return self
+
     def solids(
         self,
         selector: Union[cq.Selector, str, None] = None,
