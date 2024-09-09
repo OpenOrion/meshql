@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 import os
 import tempfile
 import hashlib
-import base64
 from plotly import graph_objects as go
 import cadquery as cq
 from cadquery.cq import CQObject
@@ -15,6 +14,12 @@ from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
+import numpy as np
+from OCP.TopoDS import TopoDS_Shape, TopoDS_Vertex, TopoDS, TopoDS_Solid
+from OCP.BRepTools import BRepTools
+from OCP.BRep import BRep_Builder, BRep_Tool
+import cadquery as cq
+import cadquery as cq
 
 CQType2D = Literal["face", "wire", "edge", "vertex"]
 CQType = Union[Literal["compound", "solid", "shell"], CQType2D]
@@ -183,9 +188,8 @@ class CQLinq:
                 raise ValueError("Edges do not form a closed loop")
         
         assert sorted_paths[-1].end == sorted_paths[0].start, "Edges do not form a closed loop"
-        return [path.edge for path in sorted_paths]
+        return sorted_paths
     
-
 
 
 
@@ -434,15 +438,36 @@ class CQCache:
         return os.path.isfile(cache_file_name)
 
     @staticmethod
+    def vertex_to_Tuple(vertex: TopoDS_Vertex):
+        geom_point = BRep_Tool.Pnt_s(vertex)
+        return (geom_point.X(), geom_point.Y(), geom_point.Z())
+
+    @staticmethod
+    def get_part_checksum(shape: cq.Shape, precision=3):
+
+        vertices = np.array(
+            [CQCache.vertex_to_Tuple(TopoDS.Vertex_s(v)) for v in shape._entities("Vertex")]
+        )
+
+        rounded_vertices = np.round(vertices, precision)
+        rounded_vertices[rounded_vertices == -0] = 0
+
+        sorted_indices = np.lexsort(rounded_vertices.T)
+        sorted_vertices = rounded_vertices[sorted_indices]
+
+        vertices_hash = hashlib.md5(sorted_vertices.tobytes()).digest()
+        return hashlib.md5(vertices_hash).hexdigest()
+
+    @staticmethod
     def get_file_name(shape: Union[Sequence[CQObject], CQObject]):
-        prev_vector = cq.Vector(0,0,0)
-        for vertex in cast(Sequence[cq.Vertex], CQLinq.select(shape, "vertex")):
-            prev_vector += vertex.Center()
-        
-        hasher = hashlib.md5()
-        hasher.update(bytes(str(tuple(np.round(prev_vector.toTuple(), 4))), "utf-8"))
         # encode the hash as a filesystem safe string
-        shape_id = base64.urlsafe_b64encode(hasher.digest()).decode("utf-8")
+        if isinstance(shape, cq.Shape):
+            shape_id = CQCache.get_part_checksum(shape)
+        else:
+            cat_shape_id = ""
+            for obj in shape:
+                cat_shape_id += CQCache.get_part_checksum(obj)
+            shape_id = hashlib.md5(cat_shape_id.encode()).hexdigest()
         return f"{CACHE_DIR_PATH}/{shape_id}.brep"
 
     @staticmethod

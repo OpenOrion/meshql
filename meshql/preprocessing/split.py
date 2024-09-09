@@ -43,6 +43,10 @@ class Split(Selectable):
             max_dim or workplane.findSolid().BoundingBox().DiagonalLength * 10
         )
 
+    def show(self):
+        show(self.workplane)
+        return self
+
     def apply(self, refresh: bool = False):
         split_faces = [
             split_face
@@ -85,7 +89,7 @@ class Split(Selectable):
 
     def from_ratios(
         self,
-        start,
+        start: Selection,
         end: Selection,
         ratios: list[float],
         dir: Literal["away", "towards", "both"],
@@ -104,8 +108,10 @@ class Split(Selectable):
         assert len(start_selection) > 0, "no selection for start present"
         assert len(end_selection) > 0, "no selection for end present"
 
-        start_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], CQLinq.sortByConnect(start_selection)))
-        end_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], CQLinq.sortByConnect(end_selection)))
+        start_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], start_selection))
+        end_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], reversed(end_selection)))
+
+        # show(start_wire, end_wire)
 
 
         for ratio in ratios:
@@ -114,6 +120,8 @@ class Split(Selectable):
                 0.5 - ratio if ratio <= 0.5 else 1.5 - ratio
             )
             edge = cq.Edge.makeLine(start_point, end_point)
+            # show(start_wire, end_wire, edge)
+
 
             if start.type and start.type == end.type:
                 target = self.type_groups[start.type]
@@ -258,15 +266,15 @@ def split_workplane(
 ):
     shape_combo = [*workplane.vals(), *split_faces]
     cache_exists = CQCache.get_cache_exists(shape_combo) if use_cache else False
-    cache_file_name = CQCache.get_file_name(shape_combo) if use_cache else ""
+    cache_file_name = CQCache.get_file_name(shape_combo)
+
     if use_cache and cache_exists:
         shape = CQCache.import_brep(cache_file_name)
     else:
         for split_face in split_faces:
             workplane = workplane.split(split_face)
         shape = CQExtensions.fuse_shapes(workplane.vals())
-        if use_cache:
-            CQCache.export_brep(shape, cache_file_name)
+        CQCache.export_brep(shape, cache_file_name)
     return cq.Workplane(shape)
 
 

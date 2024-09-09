@@ -53,6 +53,12 @@ class GmshGeometryQL(GeometryQL):
     def __exit__(self, exc_type, exc_val, exc_tb):
         gmsh.finalize()
 
+    def end(self, num: Optional[int] = None):
+        if num is None:
+            self.workplane = self.initial_workplane
+        else:
+            self.workplane = self.workplane.end(num)
+        return self
 
     def load(
         self,
@@ -107,19 +113,25 @@ class GmshGeometryQL(GeometryQL):
         gmsh.model.occ.synchronize()
 
     def _addEntityGroup(self, group_name: str, entities: OrderedSet[Entity]):
-        set_physical_group = SetPhysicalGroup(entities, group_name)
-        self._ctx.add_transaction(set_physical_group)
+        if len(entities):
+            set_physical_group = SetPhysicalGroup(entities, group_name)
+            self._ctx.add_transaction(set_physical_group)
 
     def addPhysicalGroup(
         self,
         group: Union[
             str,
             Sequence[str],
-            BoundaryCondition,
-            Callable[[int, cq.Face], BoundaryCondition],
         ],
     ):
-        return self.addBoundaryCondition(group)
+        if isinstance(group, str):
+            group_label = group
+            self._addEntityGroup(group_label, self.vals())
+        elif isinstance(group, Sequence):
+            for i, group_name in enumerate(group):
+                new_group_entity = list(self.vals())[i]
+                self._addEntityGroup(group_name, OrderedSet([new_group_entity]))
+        return self
 
     def recombine(self, angle: float = 45):
         faces = self.entity_ctx.select_many(self.workplane, "face")
@@ -226,13 +238,14 @@ class GmshGeometryQL(GeometryQL):
     def _getTransfiniteEdgeGroups(self, cq_faces: Sequence[cq.Face]):
         transfinite_edge_groups: list[set[cq.Edge]] = []
         for cq_face in cq_faces:
-            sorted_cq_edges = CQLinq.sortByConnect(cq_face.Edges())
+            sorted_edges = CQLinq.sortByConnect(cq_face.Edges())
             # TODO: add support for 3 sided faces
-            for i, cq_edge in enumerate(sorted_cq_edges):
+            for i, path in enumerate(sorted_edges):
+                cq_edge = path.edge
                 parllel_edge_index = (
-                    i + 2 if i + 2 < len(sorted_cq_edges) else (i + 2) - len(sorted_cq_edges)
+                    i + 2 if i + 2 < len(sorted_edges) else (i + 2) - len(sorted_edges)
                 )
-                cq_parllel_edge = sorted_cq_edges[parllel_edge_index]
+                cq_parllel_edge = sorted_edges[parllel_edge_index].edge
                 found_group: Optional[set] = None
                 for i, group in enumerate(transfinite_edge_groups):
                     if not found_group:
@@ -248,7 +261,7 @@ class GmshGeometryQL(GeometryQL):
                             transfinite_edge_groups.remove(group)
 
                 if found_group is None:
-                    transfinite_edge_groups.append(set([cq_edge, cq_parllel_edge]))
+                    transfinite_edge_groups.append(set([path.edge, cq_parllel_edge]))
         return transfinite_edge_groups
 
     def _setTransfiniteFaceAuto(

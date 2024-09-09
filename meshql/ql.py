@@ -37,14 +37,6 @@ class GeometryQL(Selectable):
         self.boundary_conditions = dict[str, BoundaryCondition]()
         self.type_groups = None
 
-
-    def end(self, num: Optional[int] = None):
-        if num is None:
-            self.workplane = self.initial_workplane
-        else:
-            self.workplane = self.workplane.end(num)
-        return self
-
     def solids(
         self,
         selector: Union[cq.Selector, str, None] = None,
@@ -187,37 +179,25 @@ class GeometryQL(Selectable):
     def addBoundaryCondition(
         self,
         group: Union[
-            str,
-            Sequence[str],
             BoundaryCondition,
             Callable[[int, cq.Face], BoundaryCondition],
         ],
     ):
-        if isinstance(group, Sequence):
-            for i, group_name in enumerate(group):
-                new_group_entity = list(self.vals())[i]
-                self._addEntityGroup(group_name, OrderedSet([new_group_entity]))
-        else:
-            if isinstance(group, str):
-                group_label = group
-            elif isinstance(group, Callable):
+        if isinstance(group, Callable):
                 for i, face in enumerate(self.workplane.vals()):
                     assert isinstance(
                         face, cq.Face
                     ), "Boundary condition can only be applied to faces"
                     group_val = group(i, face)
                     group_label = group_val.label
-                    assert (
-                        group_label not in self.boundary_conditions
-                    ), f"Boundary condition {group_label} added already"
                     self.boundary_conditions[group_label] = group_val
-            else:
-                group_label = group.label
-                assert (
-                    group_label not in self.boundary_conditions
-                ), f"Boundary condition {group.label} added already"
-                self.boundary_conditions[group.label] = group
-
+                    self._addEntityGroup(group_label, self.vals())
+        else:
+            group_label = group.label
+            assert (
+                group_label not in self.boundary_conditions
+            ), f"Boundary condition {group.label} added already"
+            self.boundary_conditions[group.label] = group
             self._addEntityGroup(group_label, self.vals())
 
         return self
