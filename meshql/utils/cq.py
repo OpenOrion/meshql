@@ -18,6 +18,7 @@ import numpy as np
 from OCP.TopoDS import TopoDS_Shape, TopoDS_Vertex, TopoDS, TopoDS_Solid
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder, BRep_Tool
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
 import cadquery as cq
 import cadquery as cq
 
@@ -218,6 +219,7 @@ class CQLinq:
             sorted_paths[-1].end == sorted_paths[0].start
         ), "Edges do not form a closed loop"
         return sorted_paths
+
 
     @staticmethod
     def groupByTypes(
@@ -505,6 +507,16 @@ class CQUtils:
     def scale(shape: TShape, x: float = 1, y: float = 1, z: float = 1) -> TShape:
         t = cq.Matrix([[x, 0, 0, 0], [0, y, 0, 0], [0, 0, z, 0], [0, 0, 0, 1]])
         return shape.transformGeometry(t)
+
+
+    @staticmethod
+    def is_clockwise(edge1: cq.Edge, edge2: cq.Edge):
+        xy_plane = cq.Plane.XY()
+
+        start_vec: cq.Vector = edge1.endPoint().projectToPlane(xy_plane) - edge1.startPoint().projectToPlane(xy_plane)
+        end_vec: cq.Vector = edge2.endPoint().projectToPlane(xy_plane) - edge2.startPoint().projectToPlane(xy_plane)
+        normal = (end_vec.cross(start_vec)).normalized()
+        return (normal.x + normal.y + normal.z) < 0
 
 
 class CQCache:

@@ -87,18 +87,24 @@ class Split(Selectable):
             self.refresh_type_groups()
 
         offset = to_vec(np.radians(list(angle_offset)))
+        start_paths = CQLinq.sortByConnect(start.select(self, "edge", is_intersection=True))
         start_selection = [
-            path.edge for path in CQLinq.sortByConnect(start.select(self, "edge", is_intersection=True))
+            path.edge for path in start_paths
         ]
+        
+        end_paths = CQLinq.sortByConnect(end.select(self, "edge", is_intersection=True))
         end_selection = [
-            path.edge for path in CQLinq.sortByConnect(end.select(self, "edge", is_intersection=True))
+            path.edge for path in end_paths
         ]
+
+        start_cw = CQUtils.is_clockwise(start_selection[0], start_selection[1])
+        end_cw = CQUtils.is_clockwise(end_selection[0], end_selection[1])
+
         assert len(start_selection) > 0, "no selection for start present"
         assert len(end_selection) > 0, "no selection for end present"
 
-        start_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], start_selection))
-        end_wire = cq.Wire.assembleEdges(cast(list[cq.Edge], end_selection))
-
+        start_wire = cq.Wire.assembleEdges(start_selection if start_cw else reversed(start_selection))
+        end_wire = cq.Wire.assembleEdges(end_selection if end_cw else reversed(end_selection))
 
         for ratio in ratios:
             start_point = start_wire.positionAt(ratio)
