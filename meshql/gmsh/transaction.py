@@ -110,4 +110,4 @@ class GmshTransactionContext:
 
         self.entity_transactions = OrderedDict()
         self.system_transactions = OrderedDict()
-        # self.mesh = import_from_gmsh()
+        self.mesh = import_from_gmsh()

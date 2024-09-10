@@ -26,10 +26,10 @@ from meshql.gmsh.transfinite import (
     TransfiniteMeshType,
 )
 from meshql.mesh.exporters import export_to_su2
-from meshql.preprocessing.split import Split, split_workplane
+from meshql.preprocessing.split import Split
 from meshql.ql import GeometryQL, ShowType
 from meshql.gmsh.transaction import GmshTransactionContext, GmshTransaction
-from meshql.utils.cq import CQ_TYPE_RANKING, CQExtensions, CQGroupTypeString, CQLinq
+from meshql.utils.cq import CQ_TYPE_RANKING, CQUtils, CQGroupTypeString, CQLinq
 from meshql.utils.types import OrderedSet
 from cadquery.cq import CQObject
 import numpy as np
@@ -53,7 +53,6 @@ class GmshGeometryQL(GeometryQL):
     def __exit__(self, exc_type, exc_val, exc_tb):
         gmsh.finalize()
 
-
     def load(
         self,
         target: Union[cq.Workplane, str, Iterable[CQObject]],
@@ -61,18 +60,17 @@ class GmshGeometryQL(GeometryQL):
         max_dim: Optional[float] = None,
         tol: Optional[float] = None,
         check_splits: Optional[bool] = None,
-        use_cache: bool = False,
     ):
-        workplane = CQExtensions.import_workplane(target)
+        workplane = CQUtils.import_workplane(target)
 
         # extrudes 2D shapes to 3D
-        is_2d = CQExtensions.get_dimension(workplane) == 2
+        is_2d = CQUtils.get_dimension(workplane) == 2
         if is_2d:
             workplane = workplane.extrude(-1)
 
         split = None
         if on_split:
-            split = Split(workplane, use_cache, tol)
+            split = Split(workplane, max_dim, tol)
             workplane = on_split(split).apply().workplane
 
         max_dim = max_dim or workplane.findSolid().BoundingBox().DiagonalLength * 10
@@ -87,7 +85,7 @@ class GmshGeometryQL(GeometryQL):
         if is_2d:
             # fuses top faces to appear as one Compound in GMSH
             faces = cast(Sequence[cq.Face], workplane.faces(">Z").vals())
-            fused_face = CQExtensions.fuse_shapes(faces)
+            fused_face = CQUtils.fuse_shapes(faces)
             workplane = cq.Workplane(fused_face)
 
         self.workplane = self.initial_workplane = workplane
@@ -300,7 +298,7 @@ class GmshGeometryQL(GeometryQL):
         auto_recombine: bool = True,
     ):
         self.is_structured = True
-        if CQExtensions.get_dimension(self.workplane) == 2:
+        if CQUtils.get_dimension(self.workplane) == 2:
             cq_faces = list(CQLinq.select(self.workplane, "face"))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
 

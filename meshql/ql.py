@@ -7,7 +7,7 @@ from meshql.entity import CQEntityContext, Entity
 from meshql.selector import Selectable, Selection
 from meshql.utils.cq import (
     CQ_TYPE_STR_MAPPING,
-    CQExtensions,
+    CQUtils,
     CQGroupTypeString,
     CQLinq,
     CQType,
@@ -154,7 +154,7 @@ class GeometryQL(Selectable):
             assert self.mesh is not None, "Mesh is not generated yet."
             visualize_mesh(self.mesh, only_markers=only_markers)
         elif type == "plot":
-            CQExtensions.plot_cq(self.workplane, ctx=self.entity_ctx)
+            CQUtils.plot_cq(self.workplane, ctx=self.entity_ctx)
         elif type == "cq":
             from jupyter_cadquery import show
 
@@ -188,14 +188,14 @@ class GeometryQL(Selectable):
         ],
     ):
         if isinstance(group, Callable):
-                for i, face in enumerate(self.workplane.vals()):
-                    assert isinstance(
-                        face, cq.Face
-                    ), "Boundary condition can only be applied to faces"
-                    group_val = group(i, face)
-                    group_label = group_val.label
-                    self.boundary_conditions[group_label] = group_val
-                    self._addEntityGroup(group_label, self.vals())
+            for i, face in enumerate(self.workplane.vals()):
+                assert isinstance(
+                    face, cq.Face
+                ), "Boundary condition can only be applied to faces"
+                group_val = group(i, face)
+                group_label = group_val.label
+                self.boundary_conditions[group_label] = group_val
+                self._addEntityGroup(group_label, self.vals())
         else:
             group_label = group.label
             assert (
