@@ -1,6 +1,7 @@
 from typing import Iterable, Iterator, Literal, MutableSet, TypeVar, Union
 import numpy as np
 import cadquery as cq
+from cadquery.cq import CQObject
 
 NumpyFloat = np.float32
 Number = Union[int, float, NumpyFloat]
@@ -8,6 +9,7 @@ VectorSequence = Union[tuple[Number, Number, Number], tuple[Number, Number], np.
 VectorLike = Union[VectorSequence, cq.Vector]
 LineTuple = tuple[VectorSequence, VectorSequence]
 Axis = Union[Literal["X", "Y", "Z"], VectorSequence, cq.Vector]
+
 
 def to_array(vec: VectorLike):
     if isinstance(vec, np.ndarray):

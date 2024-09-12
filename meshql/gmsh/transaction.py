@@ -1,8 +1,8 @@
 import uuid
 import gmsh
 from dataclasses import dataclass
-from typing import Optional, OrderedDict, Sequence, Union
-from meshql.entity import Entity
+from typing import Optional, OrderedDict, Sequence
+from meshql.gmsh.entity import Entity
 from meshql.mesh.importers import import_from_gmsh
 from meshql.mesh.mesh import Mesh
 from meshql.utils.types import OrderedSet

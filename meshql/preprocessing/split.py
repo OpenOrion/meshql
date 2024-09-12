@@ -3,7 +3,8 @@ import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Literal, Optional, Sequence, Union, cast
 from meshql.selector import Selectable, Selection
-from meshql.utils.cq import CQUtils, CQGroupTypeString, CQLinq
+from meshql.utils.cq import CQUtils, GroupTypeString
+from meshql.utils.cq_linq import CQLinq
 from meshql.utils.split import MultiFaceAxis, SnapType, SplitUtils
 from meshql.utils.types import (
     Axis,
@@ -16,21 +17,18 @@ from meshql.utils.types import (
 )
 from jupyter_cadquery import show
 
+
 class Split(Selectable):
     def __init__(
         self,
         workplane: cq.Workplane,
-        max_dim: Optional[float] = None,
         tol: Optional[float] = None,
     ) -> None:
         self.workplane = self.initial_workplane = workplane
-        self.type_groups: dict[CQGroupTypeString, OrderedSet[CQObject]] = {}
+        self.type_groups: dict[GroupTypeString, OrderedSet[CQObject]] = {}
 
         self.tol = tol
         self.pending_splits = list[list[cq.Face]]()
-        self.max_dim = (
-            max_dim or workplane.findSolid().BoundingBox().DiagonalLength * 10
-        )
 
     def apply(self, refresh: bool = False):
         split_faces = [
@@ -41,13 +39,11 @@ class Split(Selectable):
         self.workplane = SplitUtils.split_workplane(self.workplane, split_faces)
         self.pending_splits = []
         if refresh:
-            self.refresh_type_groups()
+            self.refresh()
         return self
 
-    def refresh_type_groups(self):
-        self.type_groups = CQLinq.groupByTypes(
-            self.workplane, self.max_dim, self.tol, self.type_groups
-        )
+    def refresh(self):
+        self.type_groups = CQLinq.groupByTypes(self.workplane, self.tol)
         self.face_edge_groups = CQLinq.groupBy(self.workplane, "face", "edge")
 
     def push(self, split_shapes: Union[cq.Shape, Sequence[cq.Shape]]):
@@ -68,7 +64,9 @@ class Split(Selectable):
         angle: VectorSequence = (0, 0, 1),
         sizing: Literal["maxDim", "infinite"] = "maxDim",
     ):
-        split_face = SplitUtils.make_plane_split_face(self.workplane, base_pnt, angle, sizing)
+        split_face = SplitUtils.make_plane_split_face(
+            self.workplane, base_pnt, angle, sizing
+        )
         self.push(split_face)
         return self
 
@@ -83,19 +81,17 @@ class Split(Selectable):
     ):
         if snap != False and len(self.pending_splits) > 0:
             self.apply(refresh=True)
-        elif (start.type or end.type) and len(self.type_groups) == 0:
-            self.refresh_type_groups()
+        elif (start.group_type or end.group_type) and len(self.type_groups) == 0:
+            self.refresh()
 
         offset = to_vec(np.radians(list(angle_offset)))
-        start_paths = CQLinq.sortByConnect(start.select(self, "edge", is_intersection=True))
-        start_selection = [
-            path.edge for path in start_paths
-        ]
-        
+        start_paths = CQLinq.sortByConnect(
+            start.select(self, "edge", is_intersection=True)
+        )
+        start_selection = [path.edge for path in start_paths]
+
         end_paths = CQLinq.sortByConnect(end.select(self, "edge", is_intersection=True))
-        end_selection = [
-            path.edge for path in end_paths
-        ]
+        end_selection = [path.edge for path in end_paths]
 
         start_cw = CQUtils.is_clockwise(start_selection[0], start_selection[1])
         end_cw = CQUtils.is_clockwise(end_selection[0], end_selection[1])
@@ -103,8 +99,12 @@ class Split(Selectable):
         assert len(start_selection) > 0, "no selection for start present"
         assert len(end_selection) > 0, "no selection for end present"
 
-        start_wire = cq.Wire.assembleEdges(start_selection if start_cw else reversed(start_selection))
-        end_wire = cq.Wire.assembleEdges(end_selection if end_cw else reversed(end_selection))
+        start_wire = cq.Wire.assembleEdges(
+            start_selection if start_cw else reversed(start_selection)
+        )
+        end_wire = cq.Wire.assembleEdges(
+            end_selection if end_cw else reversed(end_selection)
+        )
 
         for ratio in ratios:
             start_point = start_wire.positionAt(ratio)
@@ -113,8 +113,8 @@ class Split(Selectable):
             )
             edge = cq.Edge.makeLine(start_point, end_point)
 
-            if start.type and start.type == end.type:
-                target = self.type_groups[start.type]
+            if start.group_type and start.group_type == end.group_type:
+                target = self.type_groups[start.group_type]
             else:
                 target = self.workplane
 
@@ -122,7 +122,8 @@ class Split(Selectable):
                 cq.Face, CQLinq.find_nearest(target, edge, shape_type="face")
             )
             normal_vec = (
-                CQUtils.normalize(nearest_face.normalAt((start_point + end_point) / 2)) + offset
+                CQUtils.normalize(nearest_face.normalAt((start_point + end_point) / 2))
+                + offset
             )
             projected_edge = edge.project(nearest_face, normal_vec).Edges()[0]
             assert isinstance(projected_edge, cq.Edge), "Projected edge is single edge"
@@ -142,18 +143,14 @@ class Split(Selectable):
         axis: Union[MultiFaceAxis, list[MultiFaceAxis]] = "avg",
         snap: SnapType = False,
         angle_offset: VectorSequence = (0, 0, 0),
-        is_initial: bool = False,
     ):
         if snap != False and len(self.pending_splits) > 0:
             self.apply(refresh=True)
-        elif selection.type and len(self.type_groups) == 0:
-            self.refresh_type_groups()
+        elif selection.group_type and len(self.type_groups) == 0:
+            self.refresh()
 
         offset = to_vec(np.radians(list(angle_offset)))
-        filtered_edges = cast(
-            Sequence[cq.Edge],
-            selection.select(self, "edge", is_initial=is_initial, is_exclusive=True),
-        )
+        filtered_edges = selection.select(self, "edge", is_exclusive=True)
         assert len(filtered_edges) > 0, "No edges found for selection"
         split_faces = list[cq.Shape]()
         snap_edges = OrderedSet[cq.Edge]()
@@ -164,7 +161,11 @@ class Split(Selectable):
                 if not isinstance(_axis, str) and dir is None:
                     dir = "towards"
                 else:
-                    dir = dir or "away" if selection.type == "interior" else "towards"
+                    dir = (
+                        dir or "away"
+                        if selection.group_type == "interior"
+                        else "towards"
+                    )
 
                 normal_vec = CQUtils.get_normal_vec(faces, cast(Axis, _axis), offset)
                 curr_split_face = SplitUtils.make_edge_split_face(
@@ -221,7 +222,9 @@ class Split(Selectable):
         dir: Literal["away", "towards", "both"] = "both",
         snap: SnapType = False,
     ):
-        split_face = SplitUtils.make_edge_split_face(self.workplane, edge, axis, dir, snap)
+        split_face = SplitUtils.make_edge_split_face(
+            self.workplane, edge, axis, dir, snap
+        )
         self.push(split_face)
         return self
 
@@ -231,26 +234,29 @@ class Split(Selectable):
         axis: Axis = "Z",
         dir: Literal["away", "towards", "both"] = "both",
     ):
+        max_dim = self.workplane.findSolid().BoundingBox().DiagonalLength * 10
+
         if isinstance(lines, tuple):
-            edges_pnts = np.array([to_2d_array(lines), to_2d_array(lines)], dtype=np.float64)
+            edges_pnts = np.array(
+                [to_2d_array(lines), to_2d_array(lines)], dtype=np.float64
+            )
         elif isinstance(lines, list) and len(lines) == 1:
-            edges_pnts = np.array([to_2d_array(lines[0]), to_2d_array(lines[0])], dtype=np.float64)
+            edges_pnts = np.array(
+                [to_2d_array(lines[0]), to_2d_array(lines[0])], dtype=np.float64
+            )
         else:
-            edges_pnts = np.array([to_2d_array(line) for line in lines], dtype=np.float64)
+            edges_pnts = np.array(
+                [to_2d_array(line) for line in lines], dtype=np.float64
+            )
         normal_vector = to_array(CQUtils.normalize(to_vec(axis)))
 
         if dir in ("both", "towards"):
-            edges_pnts[0] += self.max_dim * normal_vector
+            edges_pnts[0] += max_dim * normal_vector
         if dir in ("both", "away"):
-            edges_pnts[-1] -= self.max_dim * normal_vector
+            edges_pnts[-1] -= max_dim * normal_vector
 
         side1 = edges_pnts[:, 0].tolist()
         side2 = edges_pnts[:, 1].tolist()
         wire_pnts = [side1[0], *side2, *side1[1:][::-1]]
         self.from_pnts(wire_pnts)
         return self
-
-
-
-
-

@@ -1,7 +1,6 @@
-
 import gmsh
 from dataclasses import dataclass
-from meshql.entity import Entity
+from meshql.gmsh.entity import Entity
 from meshql.gmsh.transaction import MultiEntityTransaction
 from meshql.utils.types import OrderedSet
 
@@ -21,9 +20,13 @@ class SetPhysicalGroup(MultiEntityTransaction):
     def before_gen(self):
         entity_tags = []
         for entity in self.entities:
-            assert entity.type == self.entities.first.type, "all entities must be of the same type"
+            assert (
+                entity.type == self.entities.first.type
+            ), "all entities must be of the same type"
             entity.name = self.name
             entity_tags.append(entity.tag)
 
-        physical_group_tag = gmsh.model.addPhysicalGroup(self.entities.first.dim, entity_tags)
+        physical_group_tag = gmsh.model.addPhysicalGroup(
+            self.entities.first.dim, entity_tags
+        )
         gmsh.model.set_physical_name(self.entity_type, physical_group_tag, self.name)

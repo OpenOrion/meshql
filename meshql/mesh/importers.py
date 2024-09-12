@@ -1,5 +1,3 @@
-
-from meshql.entity import ENTITY_DIM_MAPPING
 from meshql.utils.types import NumpyFloat
 from .mesh import ElementType, Mesh
 import numpy.typing as npt
@@ -52,6 +50,8 @@ def import_from_file(file_path: str):
     raise ValueError(f"File extension not supported: {file_path}")
 
 def import_from_gmsh() -> Mesh:
+    from meshql.gmsh.entity import ENTITY_DIM_MAPPING
+
     dim = gmsh.model.getDimension()
     elements: list[npt.NDArray[np.uint16]] = []
     element_types: list[ElementType] = []

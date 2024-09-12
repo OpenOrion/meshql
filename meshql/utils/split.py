@@ -3,7 +3,9 @@ import cadquery as cq
 import numpy as np
 import cadquery as cq
 from typing import Literal, Sequence, Union, cast
-from meshql.utils.cq import CQCache, CQUtils, CQLinq
+from meshql.utils.cq import CQUtils
+from meshql.utils.cq_cache import CQCache
+from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import (
     Axis,
     OrderedSet,
@@ -18,12 +20,18 @@ MultiFaceAxis = Union[Axis, Literal["avg", "face1", "face2"]]
 
 class SplitUtils:
     @staticmethod
-    def split_workplane(
-        workplane: cq.Workplane, split_faces: Sequence[cq.Shape], use_cache: bool = True
-    ):
-        for split_face in split_faces:
-            workplane = workplane.split(split_face)
-        shape = CQUtils.fuse_shapes(workplane.vals())
+    def split_workplane(workplane: cq.Workplane, splits: Sequence[cq.Face]):
+        shape_combo = [*workplane.vals(), *splits]
+        cache_exists = CQCache.get_cache_exists(shape_combo)
+        cache_file_name = CQCache.get_file_name(shape_combo)
+        if cache_exists:
+            print("Loading exisiting split cache")
+            shape = CQCache.import_brep(cache_file_name)
+        else:
+            for split in splits:      
+                workplane = workplane.split(split)
+            shape = CQUtils.fuse_shapes(workplane.vals())
+            CQCache.export_brep(shape, cache_file_name)
         return cq.Workplane(shape)
 
     @staticmethod

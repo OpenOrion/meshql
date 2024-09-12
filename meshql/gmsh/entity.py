@@ -1,9 +1,9 @@
-from enum import Enum
 import cadquery as cq
 from cadquery.cq import CQObject
 from dataclasses import dataclass
-from typing import Iterable, Literal, Optional, OrderedDict, Sequence, Union, cast
-from meshql.utils.cq import CQLinq, CQType, CQ_TYPE_STR_MAPPING, CQType2D
+from typing import Iterable, Optional, OrderedDict, Sequence, Union, cast
+from meshql.utils.cq import CQType, CQ_TYPE_STR_MAPPING, CQType2D
+from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import OrderedSet
 
 

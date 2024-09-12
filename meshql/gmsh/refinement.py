@@ -1,7 +1,7 @@
 import gmsh
 from typing import Callable, Union
 from dataclasses import dataclass
-from meshql.entity import Entity
+from meshql.gmsh.entity import Entity
 from meshql.gmsh.transaction import (
     GmshTransaction,
     SingleEntityTransaction,

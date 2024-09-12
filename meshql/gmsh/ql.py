@@ -1,8 +1,6 @@
-from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
+from typing import Callable, Literal, Optional, Sequence, Union, cast
 import gmsh
 import cadquery as cq
-from meshql.boundary_condition import BoundaryCondition
-from meshql.entity import CQEntityContext, Entity
 from meshql.gmsh.algorithm import (
     MeshAlgorithm2DType,
     MeshAlgorithm3DType,
@@ -16,6 +14,7 @@ from meshql.gmsh.boundary_layer import (
     UnstructuredBoundaryLayer2D,
     get_boundary_ratio,
 )
+from meshql.gmsh.entity import CQEntityContext, Entity
 from meshql.gmsh.physical_group import SetPhysicalGroup
 from meshql.gmsh.refinement import Recombine, Refine, SetMeshSize, SetSmoothing
 from meshql.gmsh.transfinite import (
@@ -29,15 +28,16 @@ from meshql.mesh.exporters import export_to_su2
 from meshql.preprocessing.split import Split
 from meshql.ql import GeometryQL, ShowType
 from meshql.gmsh.transaction import GmshTransactionContext, GmshTransaction
-from meshql.utils.cq import CQ_TYPE_RANKING, CQUtils, CQGroupTypeString, CQLinq
+from meshql.utils.cq import CQ_TYPE_RANKING, CQUtils
+from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import OrderedSet
 from cadquery.cq import CQObject
 import numpy as np
 
 
 class GmshGeometryQL(GeometryQL):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, tol: Optional[float] = None) -> None:
+        super().__init__(tol)
         self._ctx = GmshTransactionContext()
         self.is_structured = False
         self._transfinite_edge_groups = list[set[cq.Edge]]()
@@ -47,55 +47,26 @@ class GmshGeometryQL(GeometryQL):
         return self._ctx.mesh
 
     def __enter__(self):
+        super().__enter__()
         gmsh.initialize()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        super().__exit__(exc_type, exc_val, exc_tb)
         gmsh.finalize()
 
     def load(
         self,
-        target: Union[cq.Workplane, str, Iterable[CQObject]],
+        target: Union[cq.Workplane, str, Sequence[CQObject]],
         on_split: Optional[Callable[[Split], Split]] = None,
-        max_dim: Optional[float] = None,
-        tol: Optional[float] = None,
-        check_splits: Optional[bool] = None,
     ):
-        workplane = CQUtils.import_workplane(target)
+        self.load_workplane(target, on_split)
 
-        # extrudes 2D shapes to 3D
-        is_2d = CQUtils.get_dimension(workplane) == 2
-        if is_2d:
-            workplane = workplane.extrude(-1)
-
-        split = None
-        if on_split:
-            split = Split(workplane, max_dim, tol)
-            workplane = on_split(split).apply().workplane
-
-        max_dim = max_dim or workplane.findSolid().BoundingBox().DiagonalLength * 10
-        check_splits = (split is not None) or not (not check_splits)
-        prev_groups = split.type_groups if split else None
-
-        preprocessed_workplane = workplane
-        self.refresh_type_groups = lambda: CQLinq.groupByTypes(
-            preprocessed_workplane, max_dim, tol, prev_groups, check_splits
-        )
-
-        if is_2d:
-            # fuses top faces to appear as one Compound in GMSH
-            faces = cast(Sequence[cq.Face], workplane.faces(">Z").vals())
-            fused_face = CQUtils.fuse_shapes(faces)
-            workplane = cq.Workplane(fused_face)
-
-        self.workplane = self.initial_workplane = workplane
-
-        topods = workplane.toOCC()
+        topods = self.workplane.toOCC()
         gmsh.model.occ.importShapesNativePointer(topods._address())
         gmsh.model.occ.synchronize()
 
-        self.entity_ctx = CQEntityContext(workplane)
-        self._tag_workplane()
+        self.entity_ctx = CQEntityContext(self.workplane)
 
         return self
 

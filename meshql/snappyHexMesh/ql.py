@@ -2,7 +2,7 @@ from typing import Callable, Iterable, Optional, Union, cast
 import gmsh
 import cadquery as cq
 from meshql.boundary_condition import BoundaryCondition
-from meshql.entity import CQEntityContext, Entity
+from meshql.gmsh.entity import CQEntityContext, Entity
 from meshql.mesh.exporters import export_to_su2
 from meshql.preprocessing.split import Split
 from meshql.ql import GeometryQL, ShowType

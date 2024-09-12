@@ -1,5 +1,5 @@
 from typing import Any, Sequence, Union, cast
-from .mesh.mesh import Mesh
+from ..mesh.mesh import Mesh
 import pythreejs
 from IPython.display import display
 from IPython.core.display import HTML

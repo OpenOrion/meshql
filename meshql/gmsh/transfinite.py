@@ -1,8 +1,8 @@
 import gmsh
 import numpy as np
 from dataclasses import dataclass
-from typing import Iterable, Literal, Optional, Sequence, Union
-from meshql.entity import Entity, ENTITY_DIM_MAPPING
+from typing import Iterable, Literal, Optional, Sequence
+from meshql.gmsh.entity import Entity, ENTITY_DIM_MAPPING
 from meshql.gmsh.transaction import (
     SingleEntityTransaction,
     MultiEntityTransaction,

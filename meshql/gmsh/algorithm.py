@@ -2,8 +2,8 @@ import gmsh
 from enum import Enum
 from dataclasses import dataclass
 from typing import Literal, Optional
-from meshql.entity import Entity
-from meshql.gmsh.transaction import SingleEntityTransaction, GmshTransaction
+from meshql.gmsh.entity import Entity
+from meshql.gmsh.transaction import GmshTransaction
 
 
 MESH_ALGORITHM_2D_MAPPING = {

@@ -1,30 +1,31 @@
 import cadquery as cq
 from cadquery.cq import CQObject
-from typing import Callable, Iterable, Literal, Optional, Sequence, Union
+from typing import Callable, Literal, Optional, Sequence, Union
 from meshql.boundary_condition import BoundaryCondition
-from meshql.entity import CQEntityContext, Entity
+from meshql.gmsh.entity import CQEntityContext, Entity
 
 from meshql.selector import Selectable, Selection
 from meshql.utils.cq import (
-    CQ_TYPE_STR_MAPPING,
-    CQUtils,
-    CQGroupTypeString,
-    CQLinq,
+    GroupTypeString,
     CQType,
 )
+
+from meshql.utils.cq_cache import CQCache
+from meshql.utils.plot import plot_cq
 from meshql.utils.types import OrderedSet
 from meshql.utils.logging import logger
-from meshql.visualizer import visualize_mesh
+from meshql.utils.mesh_visualizer import visualize_mesh
 
 ShowType = Literal["mesh", "cq", "plot"]
 
 
 class GeometryQL(Selectable):
-    workplane: cq.Workplane
-    initial_workplane: cq.Workplane
     entity_ctx: CQEntityContext
-    type_groups: Optional[dict[CQGroupTypeString, OrderedSet[CQObject]]] = None
-    refresh_type_groups: Callable[[], dict[CQGroupTypeString, OrderedSet[CQObject]]]
+
+    def __init__(self, tol: Optional[float] = None) -> None:
+        super().__init__(tol)
+        self.boundary_conditions = dict[str, BoundaryCondition]()
+        self.tagged_workplane = False
 
     @staticmethod
     def gmsh():
@@ -32,10 +33,13 @@ class GeometryQL(Selectable):
 
         return GmshGeometryQL()
 
-    def __init__(self) -> None:
-        self.initial_workplane = self.workplane = None  # type: ignore
-        self.boundary_conditions = dict[str, BoundaryCondition]()
-        self.type_groups = None
+    def __enter__(self):
+        CQCache.load_cache()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        CQCache.save_cache()
+        return
 
     def end(self, num: int = 1):
         self.workplane = self.workplane.end(num)
@@ -45,7 +49,7 @@ class GeometryQL(Selectable):
         self,
         selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
-        type: Optional[CQGroupTypeString] = None,
+        type: Optional[GroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
@@ -57,7 +61,7 @@ class GeometryQL(Selectable):
         self,
         selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
-        type: Optional[CQGroupTypeString] = None,
+        type: Optional[GroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
@@ -69,7 +73,7 @@ class GeometryQL(Selectable):
         self,
         selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
-        type: Optional[CQGroupTypeString] = None,
+        type: Optional[GroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
@@ -81,7 +85,7 @@ class GeometryQL(Selectable):
         self,
         selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
-        type: Optional[CQGroupTypeString] = None,
+        type: Optional[GroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
@@ -93,7 +97,7 @@ class GeometryQL(Selectable):
         self,
         selector: Union[cq.Selector, str, None] = None,
         tag: Union[str, None] = None,
-        type: Optional[CQGroupTypeString] = None,
+        type: Optional[GroupTypeString] = None,
         indices: Optional[Sequence[int]] = None,
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
@@ -103,27 +107,26 @@ class GeometryQL(Selectable):
 
     def fromTagged(
         self,
-        tags: Union[str, Iterable[str]],
+        tags: Union[str, Sequence[str]],
         resolve_type: Optional[CQType] = None,
         invert: bool = True,
     ):
-        if isinstance(tags, str) and resolve_type is None:
-            self.workplane = self.workplane._getTagged(tags)
-        else:
-            tagged_objs = list(CQLinq.select_tagged(self.workplane, tags, resolve_type))
-            tagged_cq_type = CQ_TYPE_STR_MAPPING[type(tagged_objs[0])]
-            workplane_objs = CQLinq.select(self.workplane, tagged_cq_type)
-            filtered_objs = CQLinq.filter(workplane_objs, tagged_objs, invert)
-            self.workplane = self.workplane.newObject(filtered_objs)
-        return self
 
-    def tag(self, names: Union[str, Sequence[str]]):
-        if isinstance(names, str):
-            self.workplane.tag(names)
+        # check if the tags are entity tags, then lazy load tagged workplane
+        is_tag_entity = False
+        if isinstance(tags, str):
+            is_tag_entity = "/" in tags
         else:
-            for i, cq_obj in enumerate(self.workplane.vals()):
-                self.workplane.newObject([cq_obj]).tag(names[i])
-        return self
+            for tag in tags:
+                if "/" in tag:
+                    is_tag_entity = True
+                    break
+
+        if is_tag_entity and not self.tagged_workplane:
+            self._tag_workplane()
+            self.tagged_workplane = True
+
+        return super().fromTagged(tags, resolve_type, invert)
 
     def _after_load(self): ...
 
@@ -154,7 +157,7 @@ class GeometryQL(Selectable):
             assert self.mesh is not None, "Mesh is not generated yet."
             visualize_mesh(self.mesh, only_markers=only_markers)
         elif type == "plot":
-            CQUtils.plot_cq(self.workplane, ctx=self.entity_ctx)
+            plot_cq(self.workplane, ctx=self.entity_ctx)
         elif type == "cq":
             from jupyter_cadquery import show
 
