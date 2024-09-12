@@ -81,11 +81,11 @@ class GeometryQL:
 
         if on_preprocess:
             self.is_split = True
-            on_preprocess(self).apply()
+            self._workplane = on_preprocess(self).apply()
 
         if self._ctx.is_2d:
             # fuses top faces to appear as one Compound in GMSH
-            faces = workplane_3d.faces(">Z").vals()
+            faces = self._workplane.faces(">Z").vals()
             fused_face = CQUtils.fuse_shapes(faces)
             self._workplane = cq.Workplane(fused_face)
 

@@ -23,6 +23,7 @@ class Split:
     def __init__(self, ql: GeometryQL) -> None:
         self.ql = ql
         self.pending_splits = list[list[cq.Face]]()
+        self.face_edge_groups = dict[cq.Edge, cq.Face]()
 
     def apply(self, refresh: bool = False):
         split_faces = [
@@ -30,15 +31,16 @@ class Split:
             for split_face_group in self.pending_splits
             for split_face in split_face_group
         ]
-        self.ql._workplane = SplitUtils.split_workplane(self.ql._workplane, split_faces)
+        split_workplane = SplitUtils.split_workplane(self.ql._workplane, split_faces)
+
+        self.ql = self.ql.__class__(
+            self.ql._ctx, split_workplane, self.ql._selection, self.ql._prev_ql
+        )
         self.pending_splits = []
         if refresh:
-            self.refresh()
-        return self
-
-    def refresh(self):
-        self.ql._ctx.region_groups = None
-        self.face_edge_groups = CQLinq.groupBy(self.ql._workplane, "face", "edge")
+            self.ql._ctx.region_groups = None
+            self.face_edge_groups = CQLinq.groupBy(self.ql._workplane, "face", "edge")
+        return split_workplane
 
     def push(self, split_shapes: Union[cq.Shape, Sequence[cq.Shape]]):
         split_shapes = (
@@ -93,10 +95,6 @@ class Split:
         snap: SnapType = False,
         angle_offset: VectorSequence = (0, 0, 0),
     ):
-        # if snap != False and len(self.pending_splits) > 0:
-        #     self.apply(refresh=True)
-        # elif (start_ql.type or end_ql.type) and self.ql._ctx.group_types is None:
-        #     self.refresh()
         self.apply(refresh=True)
 
         offset = to_vec(np.radians(list(angle_offset)))
@@ -114,11 +112,11 @@ class Split:
         if len(start_edges) > 1:
             start_cw = CQUtils.is_clockwise(start_edges[0], start_edges[1])
             start_edges = start_edges if start_cw else reversed(start_edges)
-        
+
         if len(end_edges) > 1:
             end_cw = CQUtils.is_clockwise(end_edges[0], end_edges[1])
             end_edges = end_edges if end_cw else reversed(end_edges)
-        
+
         start_wire = cq.Wire.assembleEdges(start_edges)
         end_wire = cq.Wire.assembleEdges(end_edges)
 
@@ -152,8 +150,8 @@ class Split:
 
     def group(self, on_split: Callable[["GeometryQL"], "Split"]):
         self.apply(refresh=True)
-        self.pending_splits = on_split(self.ql).pending_splits
-        return self
+        return on_split(self.ql)
+
 
     def from_normals(
         self,
@@ -164,17 +162,12 @@ class Split:
         angle_offset: VectorSequence = (0, 0, 0),
     ):
         self.apply(refresh=True)
-
         selected_ql = self._select_from(select, region_set_operation="difference")
-
-        # if snap != False and len(self.pending_splits) > 0:
-        #     self.apply(refresh=True)
-        # elif selection.type and self.ql.group_types is None:
-        #     self.refresh()
 
         offset = to_vec(np.radians(list(angle_offset)))
         filtered_edges = selected_ql._workplane.vals()
         assert len(filtered_edges) > 0, "No edges found for selection"
+        
         split_faces = list[cq.Shape]()
         snap_edges = OrderedSet[cq.Edge]()
         for edge in filtered_edges:
