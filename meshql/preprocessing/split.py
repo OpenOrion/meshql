@@ -4,7 +4,7 @@ from typing import Callable, Literal, Optional, Sequence, Union, cast
 from meshql.ql import GeometryQL
 from meshql.selector import Selection
 from meshql.utils.cq import CQUtils
-from meshql.utils.cq_linq import CQLinq
+from meshql.utils.cq_linq import CQLinq, SetOperation
 from meshql.utils.split import MultiFaceAxis, SnapType, SplitUtils
 from meshql.utils.types import (
     Axis,
@@ -16,6 +16,7 @@ from meshql.utils.types import (
     to_vec,
 )
 from jupyter_cadquery import show
+from copy import deepcopy
 
 
 class Split:
@@ -36,7 +37,7 @@ class Split:
         return self
 
     def refresh(self):
-        self.ql.group_types = None
+        self.ql._ctx.region_groups = None
         self.face_edge_groups = CQLinq.groupBy(self.ql._workplane, "face", "edge")
 
     def push(self, split_shapes: Union[cq.Shape, Sequence[cq.Shape]]):
@@ -47,8 +48,12 @@ class Split:
         return self
 
     def show(self, theme: Literal["light", "dark"] = "light"):
-        assert len(self.pending_splits) > 0, "No split faces to show"
-        show(self.ql._workplane.newObject(self.pending_splits[-1]), theme=theme)
+        show(
+            self.ql._workplane.newObject(
+                self.pending_splits[-1] if len(self.pending_splits) else []
+            ),
+            theme=theme,
+        )
         return self
 
     def from_plane(
@@ -63,52 +68,59 @@ class Split:
         self.push(split_face)
         return self
 
-        # inv_type = "exterior" if selection.type == "interior" else "interior"
-
-        # if is_exclusive:
-        #     group = selection.type and self._get_group(selection.type).difference(
-        #         self.group_types[inv_type]
-        #     )
-        # elif is_intersection:
-        #     group = selection.type and self._get_group(selection.type).intersection(
-        #         self.group_types[inv_type]
-        #     )
+    def _select_from(
+        self,
+        select_type: Union[GeometryQL, Selection],
+        region_set_operation: Optional[SetOperation] = None,
+    ):
+        ql = ql if isinstance(select_type, GeometryQL) else self.ql
+        selection = (
+            select_type._selection
+            if isinstance(select_type, GeometryQL)
+            else select_type
+        )
+        copied_selection = deepcopy(selection)
+        if region_set_operation:
+            copied_selection.region_set_operation = region_set_operation
+        return ql.select(copied_selection, "edge")
 
     def from_ratios(
         self,
-        start: Selection,
-        end: Selection,
+        start_select: Union[GeometryQL, Selection],
+        end_select: Union[GeometryQL, Selection],
         ratios: list[float],
         dir: Literal["away", "towards", "both"],
         snap: SnapType = False,
         angle_offset: VectorSequence = (0, 0, 0),
     ):
-        if snap != False and len(self.pending_splits) > 0:
-            self.apply(refresh=True)
-        elif (start.type or end.type) and len(self.ql.group_types) == 0:
-            self.refresh()
+        # if snap != False and len(self.pending_splits) > 0:
+        #     self.apply(refresh=True)
+        # elif (start_ql.type or end_ql.type) and self.ql._ctx.group_types is None:
+        #     self.refresh()
+        self.apply(refresh=True)
 
         offset = to_vec(np.radians(list(angle_offset)))
-        start_paths = CQLinq.sortByConnect(
-            start.select(self, "edge", is_intersection=True)
-        )
-        start_selection = [path.edge for path in start_paths]
+        start_ql = self._select_from(start_select, region_set_operation="intersection")
+        start_paths = CQLinq.sortByConnect(start_ql._workplane.vals())
+        start_edges = [path.edge for path in start_paths]
 
-        end_paths = CQLinq.sortByConnect(end.select(self, "edge", is_intersection=True))
-        end_selection = [path.edge for path in end_paths]
+        end_ql = self._select_from(end_select, region_set_operation="intersection")
+        end_paths = CQLinq.sortByConnect(end_ql._workplane.vals())
+        end_edges = [path.edge for path in end_paths]
 
-        start_cw = CQUtils.is_clockwise(start_selection[0], start_selection[1])
-        end_cw = CQUtils.is_clockwise(end_selection[0], end_selection[1])
+        assert len(start_edges) > 0, "no selection for start present"
+        assert len(end_edges) > 0, "no selection for end present"
 
-        assert len(start_selection) > 0, "no selection for start present"
-        assert len(end_selection) > 0, "no selection for end present"
-
-        start_wire = cq.Wire.assembleEdges(
-            start_selection if start_cw else reversed(start_selection)
-        )
-        end_wire = cq.Wire.assembleEdges(
-            end_selection if end_cw else reversed(end_selection)
-        )
+        if len(start_edges) > 1:
+            start_cw = CQUtils.is_clockwise(start_edges[0], start_edges[1])
+            start_edges = start_edges if start_cw else reversed(start_edges)
+        
+        if len(end_edges) > 1:
+            end_cw = CQUtils.is_clockwise(end_edges[0], end_edges[1])
+            end_edges = end_edges if end_cw else reversed(end_edges)
+        
+        start_wire = cq.Wire.assembleEdges(start_edges)
+        end_wire = cq.Wire.assembleEdges(end_edges)
 
         for ratio in ratios:
             start_point = start_wire.positionAt(ratio)
@@ -117,8 +129,11 @@ class Split:
             )
             edge = cq.Edge.makeLine(start_point, end_point)
 
-            if start.type and start.type == end.type:
-                target = self.group_types[start.type]
+            if (
+                start_ql._selection.type
+                and start_ql._selection.type == end_ql._selection.type
+            ):
+                target = self.ql._ctx.region_groups[start_ql._selection.type]
             else:
                 target = self.ql._workplane
 
@@ -135,22 +150,22 @@ class Split:
 
         return self
 
-    def group(self, on_split: Callable[["Split"], "Split"]):
+    def group(self, on_split: Callable[["GeometryQL"], "Split"]):
         self.apply(refresh=True)
-        self.pending_splits = on_split(self).pending_splits
+        self.pending_splits = on_split(self.ql).pending_splits
         return self
-
 
     def from_normals(
         self,
-        ql: Optional[GeometryQL] = None,
+        select: Optional[GeometryQL] = None,
         dir: Optional[Literal["away", "towards", "both"]] = None,
         axis: Union[MultiFaceAxis, list[MultiFaceAxis]] = "avg",
         snap: SnapType = False,
         angle_offset: VectorSequence = (0, 0, 0),
     ):
-        ql = ql or self.ql
         self.apply(refresh=True)
+
+        selected_ql = self._select_from(select, region_set_operation="difference")
 
         # if snap != False and len(self.pending_splits) > 0:
         #     self.apply(refresh=True)
@@ -158,18 +173,22 @@ class Split:
         #     self.refresh()
 
         offset = to_vec(np.radians(list(angle_offset)))
-        filtered_edges = ql.select(ql._selection, "edge", is_exclusive=True)
+        filtered_edges = selected_ql._workplane.vals()
         assert len(filtered_edges) > 0, "No edges found for selection"
         split_faces = list[cq.Shape]()
         snap_edges = OrderedSet[cq.Edge]()
         for edge in filtered_edges:
-            faces = cast(OrderedSet[cq.Face], self.face_edge_groups[edge])
+            faces = self.face_edge_groups[edge]
             split_face = None
             for _axis in axis if isinstance(axis, list) else [axis]:
                 if not isinstance(_axis, str) and dir is None:
                     dir = "towards"
                 else:
-                    dir = dir or "away" if ql._selection.type == "interior" else "towards"
+                    dir = (
+                        dir or "away"
+                        if selected_ql._selection.type == "interior"
+                        else "towards"
+                    )
 
                 normal_vec = CQUtils.get_normal_vec(faces, cast(Axis, _axis), offset)
                 curr_split_face = SplitUtils.make_edge_split_face(

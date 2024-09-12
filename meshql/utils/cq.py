@@ -184,3 +184,4 @@ class CQUtils:
         ) - edge2.startPoint().projectToPlane(xy_plane)
         normal = (end_vec.cross(start_vec)).normalized()
         return (normal.x + normal.y + normal.z) < 0
+

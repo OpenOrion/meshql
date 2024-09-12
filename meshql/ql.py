@@ -14,7 +14,7 @@ from meshql.utils.cq import (
 )
 
 from meshql.utils.cq_cache import CQCache
-from meshql.utils.cq_linq import CQLinq
+from meshql.utils.cq_linq import CQLinq, SetOperation
 from meshql.utils.plot import plot_cq
 from meshql.utils.types import OrderedSet
 from meshql.utils.logging import logger
@@ -27,10 +27,12 @@ ShowType = Literal["mesh", "cq", "plot"]
 class GeometryQLContext:
     def __init__(self, tol: Optional[float] = None):
         self.tol = tol
+        self.initial_workplane = cq.Workplane()
         self.selection: Optional[Selection] = None
         self.boundary_conditions = dict[str, BoundaryCondition]()
         self.is_2d = False
-        self.group_types: Optional[dict[GroupType, OrderedSet[CQObject]]] = None
+        self.is_split = False
+        self.region_groups: Optional[dict[GroupType, OrderedSet[CQObject]]] = None
 
 
 class GeometryQL:
@@ -74,21 +76,18 @@ class GeometryQL:
         else:
             workplane_3d = imported_workplane
 
-        self._workplane = self._ctx.initial_workplane = workplane_3d
-        self.initial_workplane_3d = workplane_3d
+        self._workplane = workplane_3d
+        self._ctx.initial_workplane = workplane_3d
 
         if on_preprocess:
+            self.is_split = True
             on_preprocess(self).apply()
-            # split_workplane = on_split(split).apply().workplane
-            # workplane_3d = split_workplane
 
-        # if self.ctx.is_2d:
-        #     # fuses top faces to appear as one Compound in GMSH
-        #     faces = workplane_3d.faces(">Z").vals()
-        #     fused_face = CQUtils.fuse_shapes(faces)
-        #     workplane = cq.Workplane(fused_face)
-        # else:
-        #     workplane = workplane_3d
+        if self._ctx.is_2d:
+            # fuses top faces to appear as one Compound in GMSH
+            faces = workplane_3d.faces(">Z").vals()
+            fused_face = CQUtils.fuse_shapes(faces)
+            self._workplane = cq.Workplane(fused_face)
 
     def end(self, num: int = 1):
         ql = self
@@ -116,8 +115,27 @@ class GeometryQL:
             filtered_objs = selection.selector.filter(filtered_objs)
 
         if selection.type:
-            group_objs = self._get_group(selection.type)
-            filtered_objs = GroupSelector(group_objs).filter(filtered_objs)
+            region_groups = self._get_region_groups()
+            filtered_objs = GroupSelector(region_groups[selection.type]).filter(
+                filtered_objs
+            )
+
+        if selection.region_set_operation:
+            region_groups = self._get_region_groups()
+
+            if selection.type:
+                region_type = selection.type
+            else:
+                assert (
+                    self._selection and self._selection.type
+                ), "Group selection not defined for set operation"
+                region_type = self._selection.type
+            filtered_objs = CQLinq.groupBySet(
+                filtered_objs,
+                region_type,
+                region_groups,
+                selection.region_set_operation,
+            )
 
         if selection.indices is not None:
             filtered_objs = IndexSelector(selection.indices).filter(filtered_objs)
@@ -182,32 +200,32 @@ class GeometryQL:
         selection = Selection(selector, tag, type, indices, filter)
         return self.select(selection, "vertex")
 
-    # def fromTagged(
-    #     self,
-    #     tags: Union[str, Sequence[str]],
-    #     resolve_type: Optional[CQType] = None,
-    #     invert: bool = True,
-    # ):
-    #     if isinstance(tags, str) and resolve_type is None:
-    #         workplane = self.workplane._getTagged(tags)
-    #     else:
-    #         tagged_objs = list(CQLinq.select_tagged(self.workplane, tags, resolve_type))
-    #         tagged_cq_type = CQ_TYPE_STR_MAPPING[type(tagged_objs[0])]
-    #         workplane_objs = CQLinq.select(self.workplane, tagged_cq_type)
-    #         filtered_objs = CQLinq.filter(workplane_objs, tagged_objs, invert)
-    #         workplane = self.workplane.newObject(filtered_objs)
-    #     return self.__class__.__init__(self.ctx, workplane, selection, self)
+    def fromTagged(
+        self,
+        tags: Union[str, Sequence[str]],
+        resolve_type: Optional[CQType] = None,
+        invert: bool = True,
+    ):
+        if isinstance(tags, str) and resolve_type is None:
+            workplane = self._workplane._getTagged(tags)
+        else:
+            tagged_objs = list(
+                CQLinq.select_tagged(self._workplane, tags, resolve_type)
+            )
+            tagged_cq_type = CQ_TYPE_STR_MAPPING[type(tagged_objs[0])]
+            workplane_objs = CQLinq.select(self._workplane, tagged_cq_type)
+            filtered_objs = CQLinq.filter(workplane_objs, tagged_objs, invert)
+            workplane = self._workplane.newObject(filtered_objs)
+        return self.__class__(self._ctx, workplane, Selection(), self)
 
-    def _get_group(self, group_type: Optional[GroupType] = None):
-        if group_type:
-            if self._ctx.group_types is None:
-                self._ctx.group_types = CQLinq.groupByTypes(
-                    self.initial_workplane_3d,
-                    self._ctx.tol,
-                    check_splits=not self._ctx.is_2d,
-                )
-            return self._ctx.group_types[group_type]
-        return OrderedSet[CQObject]()
+    def _get_region_groups(self):
+        if self._ctx.region_groups is None:
+            self._ctx.region_groups = CQLinq.groupByRegionTypes(
+                self._ctx.initial_workplane,
+                self._ctx.tol,
+                check_splits=self._ctx.is_split,
+            )
+        return self._ctx.region_groups
 
     def tag(self, names: Union[str, Sequence[str]]):
         if isinstance(names, str):

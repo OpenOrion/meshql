@@ -8,6 +8,8 @@ from meshql.utils.cq_cache import CQCache
 from meshql.utils.types import OrderedSet
 import cadquery as cq
 
+SetOperation = Literal["union", "intersection", "difference"]
+
 
 @dataclass
 class DirectedPath:
@@ -161,7 +163,7 @@ class CQLinq:
 
     # TODO: clean up this function
     @staticmethod
-    def groupByTypes(
+    def groupByRegionTypes(
         target: Union[cq.Workplane, Sequence[CQObject]],
         tol: Optional[float] = None,
         check_splits: bool = True,
@@ -210,7 +212,7 @@ class CQLinq:
 
                     # if cache_checksum in CQCache.group_cache:
                     #     group_type = CQCache.group_cache[cache_checksum]
-                    
+
                     if check_splits:
                         group_type = CQUtils.get_group_type(
                             workplane, face, max_dim, tol
@@ -222,7 +224,7 @@ class CQLinq:
                                 group_type = "interior"
                                 break
                     face_group = groups[group_type]
-                    
+
                     # store group type in cache
                     # CQCache.group_cache[cache_checksum] = group_type
 
@@ -236,6 +238,29 @@ class CQLinq:
             groups["exterior"] = exterior_group_tmp
 
         return groups
+
+    @staticmethod
+    def groupBySet(
+        target: Union[cq.Workplane, Iterable[CQObject], CQObject],
+        group_type: GroupType,
+        group_types: dict[str, cq.Workplane],
+        set_operation: SetOperation,
+    ):
+        cq_objs = OrderedSet(
+            target.vals()
+            if isinstance(target, cq.Workplane)
+            else ([target] if isinstance(target, CQObject) else list(target))
+        )
+
+        inv_type = "interior" if group_type == "exterior" else "exterior"
+
+        if set_operation == "difference":
+            return cq_objs.difference(group_types[inv_type])
+        elif set_operation == "intersection":
+            return cq_objs.intersection(group_types[inv_type])
+
+        elif set_operation == "union":
+            return cq_objs.union(group_types[inv_type])
 
     @staticmethod
     def groupBy(

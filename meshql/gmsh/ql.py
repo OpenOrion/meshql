@@ -36,25 +36,31 @@ from meshql.utils.types import OrderedSet
 from cadquery.cq import CQObject
 import numpy as np
 
+class GmshGeometryQLContext(GeometryQLContext):
+    entity_ctx: CQEntityContext
+    def __init__(self, tol: Optional[float] = None):
+        super().__init__(tol)
+        self.transaction_ctx = GmshTransactionContext()
+        self.is_structured = False
+        self.transfinite_edge_groups = list[set[cq.Edge]]()
 
 class GmshGeometryQL(GeometryQL):
+    _ctx: GmshGeometryQLContext
     def __init__(
         self,
-        ctx: Optional[GeometryQLContext] = None,
+        ctx: Optional[GmshGeometryQLContext] = None,
         workplane: Optional[cq.Workplane] = None,
         selection: Optional[Selection] = None,
         prev_ql: Optional["GeometryQL"] = None,
     ) -> None:
+        ctx = ctx or GmshGeometryQLContext()
         super().__init__(
             ctx=ctx, workplane=workplane, selection=selection, prev_ql=prev_ql
         )
-        self._transaction_ctx = GmshTransactionContext()
-        self.is_structured = False
-        self._transfinite_edge_groups = list[set[cq.Edge]]()
 
     @property
     def mesh(self):
-        return self._transaction_ctx.mesh
+        return self._ctx.transaction_ctx.mesh
 
     def __enter__(self):
         super().__enter__()
@@ -77,7 +83,7 @@ class GmshGeometryQL(GeometryQL):
         gmsh.model.occ.importShapesNativePointer(topods._address())
         gmsh.model.occ.synchronize()
 
-        self.entity_ctx = CQEntityContext(self._workplane)
+        self._ctx.entity_ctx = CQEntityContext(self._workplane)
 
         if tag_workplane:
             self._tag_workplane()
@@ -86,7 +92,7 @@ class GmshGeometryQL(GeometryQL):
 
     def _tag_workplane(self):
         "Tag all gmsh entity tags to workplane"
-        for cq_type, registry in self.entity_ctx.entity_registries.items():
+        for cq_type, registry in self._ctx.entity_ctx.entity_registries.items():
             for occ_obj in registry.keys():
                 tag = f"{cq_type}/{registry[occ_obj].tag}"
                 self._workplane.newObject([occ_obj]).tag(tag)
@@ -94,13 +100,13 @@ class GmshGeometryQL(GeometryQL):
     def _addEntityGroup(self, group_name: str, entities: OrderedSet[Entity]):
         if len(entities):
             set_physical_group = SetPhysicalGroup(entities, group_name)
-            self._transaction_ctx.add_transaction(set_physical_group)
+            self._ctx.transaction_ctx.add_transaction(set_physical_group)
 
     def vals(self):
-        return self.entity_ctx.select_many(self._workplane)
+        return self._ctx.entity_ctx.select_many(self._workplane)
 
     def val(self):
-        return self.entity_ctx.select(self._workplane.val())
+        return self._ctx.entity_ctx.select(self._workplane.val())
 
     def addPhysicalGroup(
         self,
@@ -119,47 +125,47 @@ class GmshGeometryQL(GeometryQL):
         return self
 
     def recombine(self, angle: float = 45):
-        faces = self.entity_ctx.select_many(self._workplane, "face")
+        faces = self._ctx.entity_ctx.select_many(self._workplane, "face")
         recombines = [Recombine(face, angle) for face in faces]
-        self._transaction_ctx.add_transactions(recombines)
+        self._ctx.transaction_ctx.add_transactions(recombines)
         return self
 
     def setMeshSize(self, size: Union[float, Callable[[float, float, float], float]]):
-        points = self.entity_ctx.select_many(self._workplane, "vertex")
+        points = self._ctx.entity_ctx.select_many(self._workplane, "vertex")
         set_size = SetMeshSize(points, size)
-        self._transaction_ctx.add_transaction(set_size)
+        self._ctx.transaction_ctx.add_transaction(set_size)
         return self
 
     def setMeshAlgorithm(self, type: MeshAlgorithm2DType, per_face: bool = False):
-        faces = self.entity_ctx.select_many(self._workplane, "face")
+        faces = self._ctx.entity_ctx.select_many(self._workplane, "face")
         if per_face:
             set_algorithms = [SetMeshAlgorithm2D(type, face) for face in faces]
-            self._transaction_ctx.add_transactions(set_algorithms)
+            self._ctx.transaction_ctx.add_transactions(set_algorithms)
         else:
             set_algorithm = SetMeshAlgorithm2D(type)
-            self._transaction_ctx.add_transaction(set_algorithm)
+            self._ctx.transaction_ctx.add_transaction(set_algorithm)
 
         return self
 
     def setMeshAlgorithm3D(self, type: MeshAlgorithm3DType):
         set_algorithm3D = SetMeshAlgorithm3D(type)
-        self._transaction_ctx.add_transaction(set_algorithm3D)
+        self._ctx.transaction_ctx.add_transaction(set_algorithm3D)
         return self
 
     def setSubdivisionAlgorithm(self, type: MeshSubdivisionType):
         set_subdivision_algorithm = SetSubdivisionAlgorithm(type)
-        self._transaction_ctx.add_transaction(set_subdivision_algorithm)
+        self._ctx.transaction_ctx.add_transaction(set_subdivision_algorithm)
         return self
 
     def smooth(self, num_smooths=1):
-        faces = self.entity_ctx.select_many(self._workplane)
+        faces = self._ctx.entity_ctx.select_many(self._workplane)
         set_smoothings = [SetSmoothing(face, num_smooths) for face in faces]
-        self._transaction_ctx.add_transactions(set_smoothings)
+        self._ctx.transaction_ctx.add_transactions(set_smoothings)
         return self
 
     def refine(self, num_refines=1):
         refine = Refine(num_refines)
-        self._transaction_ctx.add_transaction(refine)
+        self._ctx.transaction_ctx.add_transaction(refine)
         return self
 
     def setTransfiniteEdge(
@@ -170,12 +176,12 @@ class GmshGeometryQL(GeometryQL):
         ] = None,
         coef: Optional[Union[float, Sequence[float]]] = None,
     ):
-        edge_batch = self.entity_ctx.select_batch(self._workplane, "face", "edge")
+        edge_batch = self._ctx.entity_ctx.select_batch(self._workplane, "face", "edge")
         for edges in edge_batch:
             for i, edge in enumerate(edges):
                 transaction = cast(
                     SetTransfiniteEdge,
-                    self._transaction_ctx.get_transaction(SetTransfiniteEdge, edge),
+                    self._ctx.transaction_ctx.get_transaction(SetTransfiniteEdge, edge),
                 )
                 if transaction is not None:
                     if num_nodes is not None:
@@ -198,26 +204,26 @@ class GmshGeometryQL(GeometryQL):
                         mesh_type if isinstance(mesh_type, str) else mesh_type[i],  # type: ignore
                         coef if isinstance(coef, (int, float)) else coef[i],
                     )
-                    self._transaction_ctx.add_transaction(set_transfinite_edge)
+                    self._ctx.transaction_ctx.add_transaction(set_transfinite_edge)
 
         return self
 
     def setTransfiniteFace(self, arrangement: TransfiniteArrangementType = "Left"):
-        self.is_structured = True
+        self._ctx.is_structured = True
         cq_face_batch = CQLinq.select_batch(self._workplane, "solid", "face")
         for cq_faces in cq_face_batch:
-            faces = self.entity_ctx.select_many(cq_faces)
+            faces = self._ctx.entity_ctx.select_many(cq_faces)
             set_transfinite_faces = [
                 SetTransfiniteFace(face, arrangement) for face in faces
             ]
-            self._transaction_ctx.add_transactions(set_transfinite_faces)
+            self._ctx.transaction_ctx.add_transactions(set_transfinite_faces)
         return self
 
     def setTransfiniteSolid(self):
-        self.is_structured = True
-        solids = self.entity_ctx.select_many(self._workplane, "solid")
+        self._ctx.is_structured = True
+        solids = self._ctx.entity_ctx.select_many(self._workplane, "solid")
         set_transfinite_solids = [SetTransfiniteSolid(solid) for solid in solids]
-        self._transaction_ctx.add_transactions(set_transfinite_solids)
+        self._ctx.transaction_ctx.add_transactions(set_transfinite_solids)
         return self
 
     def _getTransfiniteEdgeGroups(self, cq_faces: Sequence[cq.Face]):
@@ -258,14 +264,14 @@ class GmshGeometryQL(GeometryQL):
     ):
         assert isinstance(cq_faces[0], cq.Face), "cq_faces must be a list of faces"
         cq_faces = cast(Sequence[cq.Face], cq_faces)
-        self.is_structured = True
+        self._ctx.is_structured = True
         for cq_face in cq_faces:
-            face = self.entity_ctx.select(cq_face)
+            face = self._ctx.entity_ctx.select(cq_face)
             set_transfinite_face = SetTransfiniteFace(face, arrangement)
-            self._transaction_ctx.add_transaction(set_transfinite_face)
-        self._transfinite_edge_groups = self._getTransfiniteEdgeGroups(cq_faces)
+            self._ctx.transaction_ctx.add_transaction(set_transfinite_face)
+        self._ctx.transfinite_edge_groups = self._getTransfiniteEdgeGroups(cq_faces)
 
-        for transfinite_group in self._transfinite_edge_groups:
+        for transfinite_group in self._ctx.transfinite_edge_groups:
             total_length = sum([cq_edge.Length() for cq_edge in transfinite_group])  # type: ignore
             group_max_num_nodes = 0
             for cq_edge in transfinite_group:
@@ -278,11 +284,11 @@ class GmshGeometryQL(GeometryQL):
             assert (
                 group_max_num_nodes > 0
             ), "group_max_num_nodes must be greater than 0, make num_nodes higher"
-            group_edges = self.entity_ctx.select_many(transfinite_group)
+            group_edges = self._ctx.entity_ctx.select_many(transfinite_group)
             set_transfinite_edges = [
                 SetTransfiniteEdge(edge, group_max_num_nodes) for edge in group_edges
             ]
-            self._transaction_ctx.add_transactions(set_transfinite_edges)
+            self._ctx.transaction_ctx.add_transactions(set_transfinite_edges)
 
     def setTransfiniteAuto(
         self,
@@ -290,8 +296,8 @@ class GmshGeometryQL(GeometryQL):
         min_nodes: int = 1,
         auto_recombine: bool = True,
     ):
-        self.is_structured = True
-        if CQUtils.get_dimension(self._workplane) == 2:
+        self._ctx.is_structured = True
+        if self._ctx.is_2d:
             cq_faces = list(CQLinq.select(self._workplane, "face"))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
 
@@ -299,9 +305,9 @@ class GmshGeometryQL(GeometryQL):
             for cq_solid in cast(
                 Sequence[cq.Solid], CQLinq.select(self._workplane, "solid")
             ):
-                solid = self.entity_ctx.select(cq_solid)
+                solid = self._ctx.entity_ctx.select(cq_solid)
                 set_transfinite_solid = SetTransfiniteSolid(solid)
-                self._transaction_ctx.add_transaction(set_transfinite_solid)
+                self._ctx.transaction_ctx.add_transaction(set_transfinite_solid)
             cq_faces = list(CQLinq.select(self._workplane, "face"))
             self._setTransfiniteFaceAuto(cq_faces, max_nodes, min_nodes)
 
@@ -317,7 +323,7 @@ class GmshGeometryQL(GeometryQL):
         ratio: Optional[float] = None,
     ):
         assert (
-            self.is_structured
+            self._ctx.is_structured
         ), "Structured boundary layer can only be applied after setTransfiniteAuto"
         assert (size is None) != (
             ratio is None
@@ -325,10 +331,10 @@ class GmshGeometryQL(GeometryQL):
 
         boundary_vertices = list(CQLinq.select(cq_objs, "vertex"))
 
-        for cq_edge, edge in self.entity_ctx.entity_registries["edge"].items():
+        for cq_edge, edge in self._ctx.entity_ctx.entity_registries["edge"].items():
             transaction = cast(
                 SetTransfiniteEdge,
-                self._transaction_ctx.get_transaction(SetTransfiniteEdge, edge),
+                self._ctx.transaction_ctx.get_transaction(SetTransfiniteEdge, edge),
             )
             assert edge.type == "edge", "StructuredBoundaryLayer only accepts edges"
             if size:
@@ -351,7 +357,7 @@ class GmshGeometryQL(GeometryQL):
                 transaction.coef = -edge_ratio
 
     def addTransaction(self, toTransaction: Callable[["GeometryQL"], GmshTransaction]):
-        self._transaction_ctx.add_transaction(toTransaction(self))
+        self._ctx.transaction_ctx.add_transaction(toTransaction(self))
         return self
 
     def addBoundaryLayer(
@@ -361,7 +367,7 @@ class GmshGeometryQL(GeometryQL):
         num_layers: Optional[int] = None,
         auto_recombine: bool = True,
     ):
-        if self.is_structured:
+        if self._ctx.is_structured:
             self._addStructuredBoundaryLayer(self._workplane.vals(), size, ratio)
         else:
             ratio = ratio or 1.0
@@ -378,17 +384,17 @@ class GmshGeometryQL(GeometryQL):
                 )
                 if auto_recombine:
                     self.recombine()
-            self._transaction_ctx.add_transaction(boundary_layer)
+            self._ctx.transaction_ctx.add_transaction(boundary_layer)
         return self
 
     def generate(self, dim: int = 3):
-        self._transaction_ctx.generate(dim)
+        self._ctx.transaction_ctx.generate(dim)
         return self
 
     def write(self, filename: str, dim: int = 3):
         if filename.endswith(".su2"):
-            assert self._transaction_ctx.mesh is not None, "Mesh is not generated yet."
-            export_to_su2(self._transaction_ctx.mesh, filename)
+            assert self._ctx.transaction_ctx.mesh is not None, "Mesh is not generated yet."
+            export_to_su2(self._ctx.transaction_ctx.mesh, filename)
         elif filename.endswith(".step"):
             cq.exporters.export(self._workplane, filename)
         else:
@@ -399,12 +405,12 @@ class GmshGeometryQL(GeometryQL):
         from jupyter_cadquery import show
 
         assert (
-            self.is_structured
+            self._ctx.is_structured
         ), "Structured boundary layer can only be applied after setTransfiniteAuto"
         assert group_index < len(
-            self._transfinite_edge_groups
+            self._ctx.transfinite_edge_groups
         ), f"Group index {group_index} is out of range"
-        group = self._transfinite_edge_groups[group_index]
+        group = self._ctx.transfinite_edge_groups[group_index]
         show(self._workplane.newObject(group), theme="dark")
         return self
 

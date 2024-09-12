@@ -20,17 +20,22 @@ MultiFaceAxis = Union[Axis, Literal["avg", "face1", "face2"]]
 class SplitUtils:
     @staticmethod
     def split_workplane(workplane: cq.Workplane, splits: Sequence[cq.Face]):
-        shape_combo = [*workplane.vals(), *splits]
-        cache_exists = CQCache.get_cache_exists(shape_combo)
-        cache_file_name = CQCache.get_file_name(shape_combo)
-        if cache_exists:
-            print("Split cache exists, loading ...")
-            shape = CQCache.import_brep(cache_file_name)
-        else:
-            for split in splits:      
-                workplane = workplane.split(split)
-            shape = CQUtils.fuse_shapes(workplane.vals())
-            CQCache.export_brep(shape, cache_file_name)
+        # shape_combo = [*workplane.vals(), *splits]
+        # cache_exists = CQCache.get_cache_exists(shape_combo)
+        # cache_file_name = CQCache.get_file_name(shape_combo)
+        # if cache_exists:
+        #     print("Split cache exists, loading ...")
+        #     shape = CQCache.import_brep(cache_file_name)
+        # else:
+        #     for split in splits:      
+        #         workplane = workplane.split(split)
+        #     shape = CQUtils.fuse_shapes(workplane.vals())
+        #     CQCache.export_brep(shape, cache_file_name)
+        for split in splits:      
+            workplane = workplane.split(split)
+        shape = CQUtils.fuse_shapes(workplane.vals())
+
+
         return cq.Workplane(shape)
 
     @staticmethod

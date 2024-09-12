@@ -6,6 +6,7 @@ from meshql.utils.cq import (
     GroupType,
     CQType,
 )
+from meshql.utils.cq_linq import SetOperation
 from meshql.utils.types import OrderedSet
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopAbs import TopAbs_SHAPE
@@ -49,6 +50,7 @@ class Selection:
     type: Optional[GroupType] = None
     indices: Optional[Sequence[int]] = None
     filter: Optional[Callable[[CQObject], bool]] = None
+    region_set_operation: Optional[SetOperation] = None
 
 
 from OCP.TopAbs import (
