@@ -2,10 +2,8 @@ import numpy as np
 import numpy.typing as npt
 from typing import Sequence, Union, cast
 from plotly import graph_objects as go
-from meshql.utils.cq import Group
 from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import NumpyFloat
-from meshql.utils.plot import add_plot
 from meshql.utils.shapes import get_sampling
 from cadquery.cq import CQObject
 import cadquery as cq
@@ -42,7 +40,6 @@ def plot_cq(
         cq.Workplane,
         CQObject,
         Sequence[CQObject],
-        Sequence[Group],
         Sequence[Sequence[CQObject]],
     ],
     title: str = "Plot",
@@ -60,10 +57,7 @@ def plot_cq(
         edge_groups = [[edge] for edge in CQLinq.select(target, "edge")]
     elif isinstance(target, Sequence) and isinstance(target[0], CQObject):
         edge_groups = [cast(Sequence[CQObject], target)]
-    elif isinstance(target, Sequence) and isinstance(target[0], Group):
-        edge_groups = [
-            [path.edge for path in cast(Group, group).paths] for group in target
-        ]
+
     else:
         target = np.cast(Sequence[Sequence], target)
         edge_groups = cast(Sequence[Sequence[CQObject]], target)

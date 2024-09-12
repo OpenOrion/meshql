@@ -3,12 +3,9 @@ import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Optional, Sequence, Union
 from meshql.utils.cq import (
-    CQ_TYPE_STR_MAPPING,
-    CQUtils,
-    GroupTypeString,
+    GroupType,
     CQType,
 )
-from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import OrderedSet
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopAbs import TopAbs_SHAPE
@@ -45,128 +42,13 @@ class GroupSelector(cq.Selector):
         return filtered_objs
 
 
-class Selectable:
-    workplane: cq.Workplane
-    initial_workplane: cq.Workplane
-    initial_3d_workplane: cq.Workplane
-    type_groups: Optional[dict[GroupTypeString, OrderedSet[CQObject]]]
-
-    def __init__(self, tol: Optional[float] = None) -> None:
-        self.initial_workplane = self.workplane = cq.Workplane("XY")
-        self.tol = tol
-        self.type_groups = None
-        self.tagged_workplane = False
-
-    def load_workplane(
-        self,
-        target: Union[cq.Workplane, str, Sequence[CQObject]],
-        on_split: Optional[Callable[[str], cq.Workplane]] = None,
-    ):
-        from meshql.preprocessing.split import Split
-
-        workplane = CQUtils.import_workplane(target)
-
-        # extrudes 2D shapes to 3D
-        is_2d = CQUtils.get_dimension(workplane) == 2
-        if is_2d:
-            workplane = workplane.extrude(-1)
-
-        if on_split:
-            split = Split(workplane, self.tol)
-            workplane = on_split(split).apply().workplane
-
-        self.initial_3d_workplane = workplane
-
-        if is_2d:
-            # fuses top faces to appear as one Compound in GMSH
-            faces = workplane.faces(">Z").vals()
-            fused_face = CQUtils.fuse_shapes(faces)
-            workplane = cq.Workplane(fused_face)
-
-        self.workplane = self.initial_workplane = workplane
-
-    def _get_group(self, group_type: Optional[GroupTypeString] = None):
-        if group_type:
-            if self.type_groups is None:
-                self.type_groups = CQLinq.groupByTypes(
-                    self.initial_3d_workplane, self.tol, check_splits=False
-                )
-            return self.type_groups[group_type]
-        return OrderedSet[CQObject]()
-
-    def fromTagged(
-        self,
-        tags: Union[str, Sequence[str]],
-        resolve_type: Optional[CQType] = None,
-        invert: bool = True,
-    ):
-        if isinstance(tags, str) and resolve_type is None:
-            self.workplane = self.workplane._getTagged(tags)
-        else:
-            tagged_objs = list(CQLinq.select_tagged(self.workplane, tags, resolve_type))
-            tagged_cq_type = CQ_TYPE_STR_MAPPING[type(tagged_objs[0])]
-            workplane_objs = CQLinq.select(self.workplane, tagged_cq_type)
-            filtered_objs = CQLinq.filter(workplane_objs, tagged_objs, invert)
-            self.workplane = self.workplane.newObject(filtered_objs)
-        return self
-
-    def tag(self, names: Union[str, Sequence[str]]):
-        if isinstance(names, str):
-            self.workplane.tag(names)
-        else:
-            for i, cq_obj in enumerate(self.workplane.vals()):
-                self.workplane.newObject([cq_obj]).tag(names[i])
-        return self
-
-
 @dataclass
 class Selection:
     selector: Union[cq.Selector, str, None] = None
     tag: Union[str, Sequence[str], None] = None
-    group_type: Optional[GroupTypeString] = None
+    type: Optional[GroupType] = None
     indices: Optional[Sequence[int]] = None
     filter: Optional[Callable[[CQObject], bool]] = None
-
-    def select(
-        self,
-        selectable: Selectable,
-        cq_type: CQType,
-        is_exclusive: bool = False,
-        is_intersection: bool = False,
-    ):
-        if self.tag:
-            cq_obj = selectable.fromTagged(self.tag)
-            filtered_entities = CQLinq.select(cq_obj, cq_type)
-        else:
-            filtered_entities = CQLinq.select(selectable.workplane, cq_type)
-
-        if isinstance(self.selector, str):
-            filtered_entities = cq.StringSyntaxSelector(self.selector).filter(
-                filtered_entities
-            )
-        elif isinstance(self.selector, cq.Selector):
-            filtered_entities = self.selector.filter(filtered_entities)
-
-        if self.group_type:
-            inv_type = "exterior" if self.group_type == "interior" else "interior"
-            if is_exclusive:
-                group = self.group_type and selectable._get_group(
-                    self.group_type
-                ).difference(selectable.type_groups[inv_type])
-            elif is_intersection:
-                group = self.group_type and selectable._get_group(
-                    self.group_type
-                ).intersection(selectable.type_groups[inv_type])
-            else:
-                group = selectable._get_group(self.group_type)
-            filtered_entities = GroupSelector(group).filter(filtered_entities)
-
-        if self.indices is not None:
-            filtered_entities = IndexSelector(self.indices).filter(filtered_entities)
-        if self.filter is not None:
-            filtered_entities = FilterSelector(self.filter).filter(filtered_entities)
-
-        return filtered_entities
 
 
 from OCP.TopAbs import (

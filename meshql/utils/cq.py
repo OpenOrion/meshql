@@ -10,7 +10,7 @@ import cadquery as cq
 
 CQType2D = Literal["face", "wire", "edge", "vertex"]
 CQType = Union[Literal["compound", "solid", "shell"], CQType2D]
-GroupTypeString = Literal["split", "interior", "exterior"]
+GroupType = Literal["split", "interior", "exterior"]
 CQEdgeOrFace = Union[cq.Edge, cq.Face]
 
 CQ_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
@@ -29,48 +29,6 @@ CQ_TYPE_CLASS_MAPPING = dict(
 CQ_TYPE_RANKING = dict(
     zip(CQ_TYPE_STR_MAPPING.keys(), range(len(CQ_TYPE_STR_MAPPING) + 1)[::-1])
 )
-
-
-@dataclass
-class DirectedPath:
-    edge: cq.Edge
-    "edge or face of path"
-
-    direction: Literal[1, -1] = 1
-    "direction of path"
-
-    def __post_init__(self):
-        assert isinstance(self.edge, cq.Edge), "edge must be an edge"
-        assert self.direction in [-1, 1], "direction must be -1 or 1"
-        self.vertices = self.edge.Vertices()[:: self.direction]
-        self.start = self.vertices[0]
-        self.end = self.vertices[-1]
-
-    def __eq__(self, __value: object) -> bool:
-        return self.edge == __value
-
-    def __hash__(self) -> int:
-        return self.edge.__hash__()
-
-
-@dataclass
-class Group:
-    paths: list[DirectedPath] = field(default_factory=list)
-    "elements in group"
-
-    prev_group: Optional["Group"] = None
-    "previous group"
-
-    next_group: Optional["Group"] = None
-    "next group"
-
-    @property
-    def start(self):
-        return self.paths[0].start
-
-    @property
-    def end(self):
-        return self.paths[-1].end
 
 
 class CQUtils:
@@ -110,7 +68,7 @@ class CQUtils:
         face: cq.Face,
         maxDim: float,
         tol: Optional[float] = None,
-    ) -> GroupTypeString:
+    ) -> GroupType:
         is_split = False
         total_solid = workplane.val()
         is_planar = face.geomType() == "PLANE"

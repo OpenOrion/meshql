@@ -1,9 +1,9 @@
 import numpy as np
 import cadquery as cq
-from cadquery.cq import CQObject
 from typing import Callable, Literal, Optional, Sequence, Union, cast
-from meshql.selector import Selectable, Selection
-from meshql.utils.cq import CQUtils, GroupTypeString
+from meshql.ql import GeometryQL
+from meshql.selector import Selection
+from meshql.utils.cq import CQUtils
 from meshql.utils.cq_linq import CQLinq
 from meshql.utils.split import MultiFaceAxis, SnapType, SplitUtils
 from meshql.utils.types import (
@@ -18,16 +18,9 @@ from meshql.utils.types import (
 from jupyter_cadquery import show
 
 
-class Split(Selectable):
-    def __init__(
-        self,
-        workplane: cq.Workplane,
-        tol: Optional[float] = None,
-    ) -> None:
-        self.workplane = self.initial_workplane = workplane
-        self.type_groups: dict[GroupTypeString, OrderedSet[CQObject]] = {}
-
-        self.tol = tol
+class Split:
+    def __init__(self, ql: GeometryQL) -> None:
+        self.ql = ql
         self.pending_splits = list[list[cq.Face]]()
 
     def apply(self, refresh: bool = False):
@@ -36,15 +29,15 @@ class Split(Selectable):
             for split_face_group in self.pending_splits
             for split_face in split_face_group
         ]
-        self.workplane = SplitUtils.split_workplane(self.workplane, split_faces)
+        self.ql._workplane = SplitUtils.split_workplane(self.ql._workplane, split_faces)
         self.pending_splits = []
         if refresh:
             self.refresh()
         return self
 
     def refresh(self):
-        self.type_groups = CQLinq.groupByTypes(self.workplane, self.tol)
-        self.face_edge_groups = CQLinq.groupBy(self.workplane, "face", "edge")
+        self.ql.group_types = None
+        self.face_edge_groups = CQLinq.groupBy(self.ql._workplane, "face", "edge")
 
     def push(self, split_shapes: Union[cq.Shape, Sequence[cq.Shape]]):
         split_shapes = (
@@ -55,7 +48,7 @@ class Split(Selectable):
 
     def show(self, theme: Literal["light", "dark"] = "light"):
         assert len(self.pending_splits) > 0, "No split faces to show"
-        show(self.workplane.newObject(self.pending_splits[-1]), theme=theme)
+        show(self.ql._workplane.newObject(self.pending_splits[-1]), theme=theme)
         return self
 
     def from_plane(
@@ -65,10 +58,21 @@ class Split(Selectable):
         sizing: Literal["maxDim", "infinite"] = "maxDim",
     ):
         split_face = SplitUtils.make_plane_split_face(
-            self.workplane, base_pnt, angle, sizing
+            self.ql._workplane, base_pnt, angle, sizing
         )
         self.push(split_face)
         return self
+
+        # inv_type = "exterior" if selection.type == "interior" else "interior"
+
+        # if is_exclusive:
+        #     group = selection.type and self._get_group(selection.type).difference(
+        #         self.group_types[inv_type]
+        #     )
+        # elif is_intersection:
+        #     group = selection.type and self._get_group(selection.type).intersection(
+        #         self.group_types[inv_type]
+        #     )
 
     def from_ratios(
         self,
@@ -81,7 +85,7 @@ class Split(Selectable):
     ):
         if snap != False and len(self.pending_splits) > 0:
             self.apply(refresh=True)
-        elif (start.group_type or end.group_type) and len(self.type_groups) == 0:
+        elif (start.type or end.type) and len(self.ql.group_types) == 0:
             self.refresh()
 
         offset = to_vec(np.radians(list(angle_offset)))
@@ -113,10 +117,10 @@ class Split(Selectable):
             )
             edge = cq.Edge.makeLine(start_point, end_point)
 
-            if start.group_type and start.group_type == end.group_type:
-                target = self.type_groups[start.group_type]
+            if start.type and start.type == end.type:
+                target = self.group_types[start.type]
             else:
-                target = self.workplane
+                target = self.ql._workplane
 
             nearest_face = cast(
                 cq.Face, CQLinq.find_nearest(target, edge, shape_type="face")
@@ -136,21 +140,25 @@ class Split(Selectable):
         self.pending_splits = on_split(self).pending_splits
         return self
 
+
     def from_normals(
         self,
-        selection: Selection,
+        ql: Optional[GeometryQL] = None,
         dir: Optional[Literal["away", "towards", "both"]] = None,
         axis: Union[MultiFaceAxis, list[MultiFaceAxis]] = "avg",
         snap: SnapType = False,
         angle_offset: VectorSequence = (0, 0, 0),
     ):
-        if snap != False and len(self.pending_splits) > 0:
-            self.apply(refresh=True)
-        elif selection.group_type and len(self.type_groups) == 0:
-            self.refresh()
+        ql = ql or self.ql
+        self.apply(refresh=True)
+
+        # if snap != False and len(self.pending_splits) > 0:
+        #     self.apply(refresh=True)
+        # elif selection.type and self.ql.group_types is None:
+        #     self.refresh()
 
         offset = to_vec(np.radians(list(angle_offset)))
-        filtered_edges = selection.select(self, "edge", is_exclusive=True)
+        filtered_edges = ql.select(ql._selection, "edge", is_exclusive=True)
         assert len(filtered_edges) > 0, "No edges found for selection"
         split_faces = list[cq.Shape]()
         snap_edges = OrderedSet[cq.Edge]()
@@ -161,15 +169,11 @@ class Split(Selectable):
                 if not isinstance(_axis, str) and dir is None:
                     dir = "towards"
                 else:
-                    dir = (
-                        dir or "away"
-                        if selection.group_type == "interior"
-                        else "towards"
-                    )
+                    dir = dir or "away" if ql._selection.type == "interior" else "towards"
 
                 normal_vec = CQUtils.get_normal_vec(faces, cast(Axis, _axis), offset)
                 curr_split_face = SplitUtils.make_edge_split_face(
-                    self.workplane, edge, normal_vec, dir, snap, snap_edges
+                    self.ql._workplane, edge, normal_vec, dir, snap, snap_edges
                 )
                 if split_face is None:
                     split_face = curr_split_face
@@ -194,10 +198,14 @@ class Split(Selectable):
 
         edges = []
         for anchor, angle in zip(anchors, angles):
-            split_face = SplitUtils.make_plane_split_face(self.workplane, anchor, angle)
+            split_face = SplitUtils.make_plane_split_face(
+                self.ql._workplane, anchor, angle
+            )
             if until == "next":
                 intersected_vertices = (
-                    self.workplane.intersect(cq.Workplane(split_face)).vertices().vals()
+                    self.ql._workplane.intersect(cq.Workplane(split_face))
+                    .vertices()
+                    .vals()
                 )
                 intersect_vertex = CQLinq.find_nearest(
                     intersected_vertices, to_vec(anchor), snap_tolerance
@@ -223,7 +231,7 @@ class Split(Selectable):
         snap: SnapType = False,
     ):
         split_face = SplitUtils.make_edge_split_face(
-            self.workplane, edge, axis, dir, snap
+            self.ql._workplane, edge, axis, dir, snap
         )
         self.push(split_face)
         return self
@@ -234,7 +242,7 @@ class Split(Selectable):
         axis: Axis = "Z",
         dir: Literal["away", "towards", "both"] = "both",
     ):
-        max_dim = self.workplane.findSolid().BoundingBox().DiagonalLength * 10
+        max_dim = self.ql._workplane.findSolid().BoundingBox().DiagonalLength * 10
 
         if isinstance(lines, tuple):
             edges_pnts = np.array(

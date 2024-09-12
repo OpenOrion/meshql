@@ -1,8 +1,9 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import hashlib
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
-from meshql.utils.cq import CQType, CQUtils, GroupTypeString
+from meshql.utils.cq import CQ_TYPE_STR_MAPPING, CQType, CQUtils, GroupType
 from meshql.utils.cq_cache import CQCache
 from meshql.utils.types import OrderedSet
 import cadquery as cq
@@ -28,44 +29,6 @@ class DirectedPath:
 
     def __hash__(self) -> int:
         return self.edge.__hash__()
-
-
-@dataclass
-class Group:
-    paths: list[DirectedPath] = field(default_factory=list)
-    "elements in group"
-
-    prev_group: Optional["Group"] = None
-    "previous group"
-
-    next_group: Optional["Group"] = None
-    "next group"
-
-    @property
-    def start(self):
-        return self.paths[0].start
-
-    @property
-    def end(self):
-        return self.paths[-1].end
-
-
-CQ_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
-    cq.Compound: "compound",
-    cq.Solid: "solid",
-    cq.Shell: "shell",
-    cq.Face: "face",
-    cq.Wire: "wire",
-    cq.Edge: "edge",
-    cq.Vertex: "vertex",
-}
-CQ_TYPE_CLASS_MAPPING = dict(
-    zip(CQ_TYPE_STR_MAPPING.values(), CQ_TYPE_STR_MAPPING.keys())
-)
-
-CQ_TYPE_RANKING = dict(
-    zip(CQ_TYPE_STR_MAPPING.keys(), range(len(CQ_TYPE_STR_MAPPING) + 1)[::-1])
-)
 
 
 class CQLinq:
@@ -95,7 +58,7 @@ class CQLinq:
         if shape_type is None:
             return list(cq_objs)
 
-        result = []
+        result: list[CQObject] = []
         for cq_obj in cq_objs:
             assert isinstance(cq_obj, cq.Shape), "target must be a shape"
             if shape_type is None:
@@ -217,7 +180,7 @@ class CQLinq:
             ]
         )
 
-        groups: dict[GroupTypeString, OrderedSet[CQObject]] = {
+        groups: dict[GroupType, OrderedSet[CQObject]] = {
             "split": OrderedSet[CQObject](),
             "interior": OrderedSet[CQObject](),
             "exterior": OrderedSet[CQObject](),
@@ -239,25 +202,29 @@ class CQLinq:
             for face in solid.Faces():
                 face_group = None
                 if face_group is None:
+                    # check if type group has already been cached
                     # face_checksum = CQCache.get_part_checksum(face)
                     # cache_checksum = hashlib.md5(
                     #     f"{workplane_checksum}{face_checksum}".encode()
                     # ).hexdigest()
 
-                    # if cache_checksum in CQCache.group_type_cache:
-                    #     face_group_type = CQCache.group_type_cache[cache_checksum]
+                    # if cache_checksum in CQCache.group_cache:
+                    #     group_type = CQCache.group_cache[cache_checksum]
+                    
                     if check_splits:
-                        face_group_type = CQUtils.get_group_type(
+                        group_type = CQUtils.get_group_type(
                             workplane, face, max_dim, tol
                         )
                     else:
-                        face_group_type = "exterior"
+                        group_type = "exterior"
                         for edge in face.outerWire().Edges():
                             if edge.Center().toTuple() in inner_edges:
-                                face_group_type = "interior"
+                                group_type = "interior"
                                 break
-                    face_group = groups[face_group_type]
-                    # CQCache.group_type_cache[cache_checksum] = face_group_type
+                    face_group = groups[group_type]
+                    
+                    # store group type in cache
+                    # CQCache.group_cache[cache_checksum] = group_type
 
                 face_group.add(face)
                 if not only_faces:

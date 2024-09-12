@@ -54,6 +54,7 @@ class CQCache:
     def load_cache():
         group_type_cache_path = Path(CACHE_DIR_PATH) / "group_type_cache.pkl"
         if group_type_cache_path.exists():
+            print("Group cache exists, loading...")
             with open(group_type_cache_path, "rb") as f:
                 CQCache.group_cache = pkl.load(f)
 
@@ -62,8 +63,6 @@ class CQCache:
         group_type_cache_path = Path(CACHE_DIR_PATH) / "group_type_cache.pkl"
         with open(group_type_cache_path, "wb") as f:
             pkl.dump(CQCache.group_cache, f)
-
-
 
     @staticmethod
     def get_part_checksum(shape: Union[cq.Shape, cq.Workplane], precision=3):
