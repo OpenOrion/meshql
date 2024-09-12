@@ -55,11 +55,9 @@ class GeometryQL:
         return GmshGeometryQL()
 
     def __enter__(self):
-        CQCache.load_cache()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        CQCache.save_cache()
         return
 
     def load(

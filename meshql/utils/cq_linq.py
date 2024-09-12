@@ -1,10 +1,11 @@
 from dataclasses import dataclass
-import hashlib
+from functools import cached_property
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
+
+import numpy as np
 from meshql.utils.cq import CQ_TYPE_STR_MAPPING, CQType, CQUtils, GroupType
-from meshql.utils.cq_cache import CQCache
 from meshql.utils.types import OrderedSet
 import cadquery as cq
 
@@ -22,9 +23,29 @@ class DirectedPath:
     def __post_init__(self):
         assert isinstance(self.edge, cq.Edge), "edge must be an edge"
         assert self.direction in [-1, 1], "direction must be -1 or 1"
-        self.vertices = self.edge.Vertices()[:: self.direction]
-        self.start = self.vertices[0]
-        self.end = self.vertices[-1]
+        self.start = self.edge.startPoint() if self.direction == 1 else self.edge.endPoint()
+        self.end = self.edge.endPoint() if self.direction == 1 else self.edge.startPoint()
+
+        # self.start = self.vertices[0]
+        # self.end = self.vertices[-1]
+        # assert np.allclose(self.start.Center().toTuple(), start.toTuple(), 5), "start point does not match"
+        # assert np.allclose(self.end.Center().toTuple(), end.toTuple(), 5), "end point does not match"
+
+       # assert self.end.Center() == end, "end point does not match"
+
+
+    @cached_property
+    def vertices(self):
+        return self.edge.Vertices()[:: self.direction]
+
+    @property
+    def start_vertex(self):
+        return self.vertices[0]
+
+    @property
+    def end_vertex(self):
+        return self.vertices[-1]
+
 
     def __eq__(self, __value: object) -> bool:
         return self.edge == __value
@@ -134,32 +155,48 @@ class CQLinq:
 
     @staticmethod
     def sortByConnect(target: Union[cq.Edge, Sequence[cq.Edge]]):
+        def connect_and_pop(cq_edge, sorted_paths, index, reverse=False):
+            """Helper function to add a DirectedPath and remove edge from list."""
+            sorted_paths.append(DirectedPath(cq_edge, direction=-1 if reverse else 1))
+            cq_edges.pop(index)
+
         unsorted_cq_edges = [target] if isinstance(target, cq.Edge) else target
         cq_edges = list(unsorted_cq_edges[1:])
         sorted_paths = [DirectedPath(unsorted_cq_edges[0])]
+
         while cq_edges:
             for i, cq_edge in enumerate(cq_edges):
-                vertices = cq_edge.Vertices()
-                if vertices[0].toTuple() == sorted_paths[-1].end.toTuple():
-                    sorted_paths.append(DirectedPath(cq_edge))
-                    cq_edges.pop(i)
+                start, end = cq_edge.startPoint(), cq_edge.endPoint()
+                sorted_end, sorted_start = sorted_paths[-1].end, sorted_paths[0].start
+
+                if CQUtils.compare_vectors(start, sorted_end):
+                    connect_and_pop(cq_edge, sorted_paths, i)
                     break
-                elif vertices[-1].toTuple() == sorted_paths[-1].end.toTuple():
-                    sorted_paths.append(DirectedPath(cq_edge, direction=-1))
-                    cq_edges.pop(i)
+                elif CQUtils.compare_vectors(end, sorted_end):
+                    connect_and_pop(cq_edge, sorted_paths, i, reverse=True)
                     break
-                elif vertices[0].toTuple() == sorted_paths[0].start.toTuple():
+                elif CQUtils.compare_vectors(start, sorted_start):
                     sorted_paths.insert(0, DirectedPath(cq_edge, direction=-1))
                     cq_edges.pop(i)
                     break
-
+                else:
+                    edge_vertices = cq_edge.Vertices()
+                    if edge_vertices[0].toTuple() == sorted_paths[-1].end_vertex.toTuple():
+                        connect_and_pop(cq_edge, sorted_paths, i)
+                        break
+                    elif edge_vertices[-1].toTuple() == sorted_paths[-1].end_vertex.toTuple():
+                        connect_and_pop(cq_edge, sorted_paths, i, reverse=True)
+                        break
+                    elif edge_vertices[0].toTuple() == sorted_paths[0].start_vertex.toTuple():
+                        sorted_paths.insert(0, DirectedPath(cq_edge, direction=-1))
+                        cq_edges.pop(i)
+                        break
             else:
                 raise ValueError("Edges do not form a closed loop")
 
-        assert (
-            sorted_paths[-1].end == sorted_paths[0].start
-        ), "Edges do not form a closed loop"
+        assert CQUtils.compare_vectors(sorted_paths[-1].end, sorted_paths[0].start), "Edges do not form a closed loop"
         return sorted_paths
+
 
     # TODO: clean up this function
     @staticmethod
@@ -173,7 +210,6 @@ class CQLinq:
             target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
         )
         max_dim = workplane.val().BoundingBox().DiagonalLength * 10
-        workplane_checksum = CQCache.get_part_checksum(workplane)
         add_wire_to_group = lambda wires, group: group.update(
             [
                 *wires,
@@ -204,15 +240,6 @@ class CQLinq:
             for face in solid.Faces():
                 face_group = None
                 if face_group is None:
-                    # check if type group has already been cached
-                    # face_checksum = CQCache.get_part_checksum(face)
-                    # cache_checksum = hashlib.md5(
-                    #     f"{workplane_checksum}{face_checksum}".encode()
-                    # ).hexdigest()
-
-                    # if cache_checksum in CQCache.group_cache:
-                    #     group_type = CQCache.group_cache[cache_checksum]
-
                     if check_splits:
                         group_type = CQUtils.get_group_type(
                             workplane, face, max_dim, tol
@@ -224,9 +251,6 @@ class CQLinq:
                                 group_type = "interior"
                                 break
                     face_group = groups[group_type]
-
-                    # store group type in cache
-                    # CQCache.group_cache[cache_checksum] = group_type
 
                 face_group.add(face)
                 if not only_faces:

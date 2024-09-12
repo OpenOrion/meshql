@@ -1,9 +1,7 @@
 import tempfile
-from cachetools import LRUCache
 import os
 from pathlib import Path
 import hashlib
-from cachetools import LRUCache
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Sequence, Union
@@ -12,20 +10,18 @@ from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
 import numpy as np
-from OCP.TopoDS import TopoDS_Shape, TopoDS_Vertex, TopoDS
+from OCP.TopoDS import TopoDS_Shape
 from OCP.BRepTools import BRepTools
-from OCP.BRep import BRep_Builder, BRep_Tool
+from OCP.BRep import BRep_Builder
 import cadquery as cq
-import pickle as pkl
+
+from meshql.utils.cq import CQUtils
 
 TEMPDIR_PATH = tempfile.gettempdir()
 CACHE_DIR_NAME = "meshql_geom_cache"
 CACHE_DIR_PATH = os.path.join(TEMPDIR_PATH, CACHE_DIR_NAME)
-ShapeChecksum = str
 
 class CQCache:
-    group_cache: LRUCache = LRUCache(maxsize=1000)
-    checksum_cache: dict[ShapeChecksum, str] = {}
 
     @staticmethod
     def import_brep(file_path: str):
@@ -46,56 +42,14 @@ class CQCache:
         return os.path.isfile(cache_file_name)
 
     @staticmethod
-    def vertex_to_Tuple(vertex: TopoDS_Vertex):
-        geom_point = BRep_Tool.Pnt_s(vertex)
-        return (geom_point.X(), geom_point.Y(), geom_point.Z())
-
-    @staticmethod
-    def load_cache():
-        group_type_cache_path = Path(CACHE_DIR_PATH) / "group_type_cache.pkl"
-        if group_type_cache_path.exists():
-            print("Group cache exists, loading...")
-            with open(group_type_cache_path, "rb") as f:
-                CQCache.group_cache = pkl.load(f)
-
-    @staticmethod
-    def save_cache():
-        group_type_cache_path = Path(CACHE_DIR_PATH) / "group_type_cache.pkl"
-        with open(group_type_cache_path, "wb") as f:
-            pkl.dump(CQCache.group_cache, f)
-
-    @staticmethod
-    def get_part_checksum(shape: Union[cq.Shape, cq.Workplane], precision=3):
-        shape = shape if isinstance(shape, cq.Shape) else shape.val()
-        if shape in CQCache.checksum_cache:
-            return CQCache.checksum_cache[shape]
-        vertices = np.array(
-            [
-                CQCache.vertex_to_Tuple(TopoDS.Vertex_s(v))
-                for v in shape._entities("Vertex")
-            ]
-        )
-
-        rounded_vertices = np.round(vertices, precision)
-        rounded_vertices[rounded_vertices == -0] = 0
-
-        sorted_indices = np.lexsort(rounded_vertices.T)
-        sorted_vertices = rounded_vertices[sorted_indices]
-
-        vertices_hash = hashlib.md5(sorted_vertices.tobytes()).digest()
-        checksum = hashlib.md5(vertices_hash).hexdigest()
-        CQCache.checksum_cache[shape] = checksum
-        return checksum
-    
-    @staticmethod
     def get_file_name(shape: Union[Sequence[CQObject], CQObject]):
         # encode the hash as a filesystem safe string
         if isinstance(shape, cq.Shape):
-            shape_id = CQCache.get_part_checksum(shape)
+            shape_id = CQUtils.get_part_checksum(shape)
         else:
             cat_shape_id = ""
             for obj in shape:
-                cat_shape_id += CQCache.get_part_checksum(obj)
+                cat_shape_id += CQUtils.get_part_checksum(obj)
             shape_id = hashlib.md5(cat_shape_id.encode()).hexdigest()
         return f"{CACHE_DIR_PATH}/{shape_id}.brep"
 

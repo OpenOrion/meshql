@@ -1,10 +1,14 @@
 from dataclasses import dataclass, field
+import hashlib
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Iterable, Literal, Optional, Sequence, Union
 import numpy as np
 from meshql.utils.types import Axis, OrderedSet, to_vec
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
+from OCP.TopoDS import TopoDS, TopoDS_Vertex
+from OCP.BRep import BRep_Tool
+
 import numpy as np
 import cadquery as cq
 
@@ -29,9 +33,10 @@ CQ_TYPE_CLASS_MAPPING = dict(
 CQ_TYPE_RANKING = dict(
     zip(CQ_TYPE_STR_MAPPING.keys(), range(len(CQ_TYPE_STR_MAPPING) + 1)[::-1])
 )
-
-
+ShapeChecksum = str
 class CQUtils:
+    checksum_cache: dict[ShapeChecksum, str] = {}
+
     @staticmethod
     def is_interior_face(face: CQObject):
         assert isinstance(face, cq.Face), "object must be a face"
@@ -172,6 +177,7 @@ class CQUtils:
         t = cq.Matrix([[x, 0, 0, 0], [0, y, 0, 0], [0, 0, z, 0], [0, 0, 0, 1]])
         return shape.transformGeometry(t)
 
+
     @staticmethod
     def is_clockwise(edge1: cq.Edge, edge2: cq.Edge):
         xy_plane = cq.Plane.XY()
@@ -185,3 +191,40 @@ class CQUtils:
         normal = (end_vec.cross(start_vec)).normalized()
         return (normal.x + normal.y + normal.z) < 0
 
+
+    @staticmethod
+    def vertex_to_Tuple(vertex: TopoDS_Vertex):
+        geom_point = BRep_Tool.Pnt_s(vertex)
+        return (geom_point.X(), geom_point.Y(), geom_point.Z())
+
+    @staticmethod
+    def get_part_checksum(shape: Union[cq.Shape, cq.Workplane], precision=3):
+        shape = shape if isinstance(shape, cq.Shape) else shape.val()
+        if shape in CQUtils.checksum_cache:
+            return CQUtils.checksum_cache[shape]
+        vertices = np.array(
+            [
+                CQUtils.vertex_to_Tuple(TopoDS.Vertex_s(v))
+                for v in shape._entities("Vertex")
+            ]
+        )
+
+        rounded_vertices = np.round(vertices, precision)
+        rounded_vertices[rounded_vertices == -0] = 0
+
+        sorted_indices = np.lexsort(rounded_vertices.T)
+        sorted_vertices = rounded_vertices[sorted_indices]
+
+        vertices_hash = hashlib.md5(sorted_vertices.tobytes()).digest()
+        checksum = hashlib.md5(vertices_hash).hexdigest()
+        CQUtils.checksum_cache[shape] = checksum
+        return checksum
+    
+    @staticmethod
+    def compare_shapes(shape1: cq.Shape, shape2: cq.Shape):
+        return CQUtils.get_part_checksum(shape1) == CQUtils.get_part_checksum(shape2)
+    
+    @staticmethod
+    def compare_vectors(vec1: cq.Vector, vec2: cq.Vector, atol=1E-3):
+        is_close =  np.isclose(vec1.toTuple(), vec2.toTuple(), atol=atol)
+        return is_close.all()
