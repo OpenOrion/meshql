@@ -2,16 +2,17 @@ import cadquery as cq
 from cadquery.cq import CQObject
 from dataclasses import dataclass
 from typing import Iterable, Optional, OrderedDict, Sequence, Union, cast
-from meshql.utils.cq import CQType, CQ_TYPE_STR_MAPPING, CQType2D
+from meshql.utils.cq import OCC_TYPE_STR_MAPPING, CQType, CQ_TYPE_STR_MAPPING
 from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import OrderedSet
-
+from OCP.TopoDS import TopoDS_Shape, TopoDS_Face
+from cadquery.occ_impl.shapes import downcast, HASH_CODE_MAX
 
 ENTITY_DIM_MAPPING: dict[CQType, int] = {
-    "vertex": 0,
-    "edge": 1,
-    "face": 2,
-    "solid": 3,
+    "Vertex": 0,
+    "Edge": 1,
+    "Face": 2,
+    "Solid": 3,
 }
 
 
@@ -47,35 +48,39 @@ class Entity:
 class CQEntityContext:
     "Maps OCC objects to gmsh entity tags"
 
-    def __init__(self, workplane: cq.Workplane, level: Union[CQType, CQType2D] = "edge") -> None:
+    def __init__(self, workplane: cq.Workplane, level: CQType = "Edge") -> None:
         self.dimension = 3 if len(workplane.solids().vals()) else 2
 
-        self.entity_registries: dict[CQType, OrderedDict[CQObject, Entity]] = {
-            "compound": OrderedDict[CQObject, Entity](),
-            "solid": OrderedDict[CQObject, Entity](),
-            "shell": OrderedDict[CQObject, Entity](),
-            "face": OrderedDict[CQObject, Entity](),
-            "wire": OrderedDict[CQObject, Entity](),
-            "edge": OrderedDict[CQObject, Entity](),
-            "vertex": OrderedDict[CQObject, Entity](),
+        self.entity_registries: dict[CQType, OrderedDict[int, Entity]] = {
+            "Compound": OrderedDict[int, Entity](),
+            "Solid": OrderedDict[int, Entity](),
+            "Shell": OrderedDict[int, Entity](),
+            "Face": OrderedDict[int, Entity](),
+            "Wire": OrderedDict[int, Entity](),
+            "Edge": OrderedDict[int, Entity](),
+            "Vertex": OrderedDict[int, Entity](),
         }
+        self.shape_lookup: dict[int, TopoDS_Shape] = {}
 
         if self.dimension == 3:
-            self._init_3d_objs(workplane, level)
+            self._init_3d_objs(workplane.solids().vals(), level)
         else:
-            self._init_2d_objs(workplane, cast(CQType2D, level))
+            self._init_2d_objs(workplane.faces().vals(), level)
 
-    def add(self, obj: CQObject):
-        entity_type = CQ_TYPE_STR_MAPPING[type(obj)]
+    def add(self, shape: TopoDS_Shape):
+        casted_shape = downcast(shape)
+        entity_type = OCC_TYPE_STR_MAPPING[type(casted_shape)]
+        obj_hash = casted_shape.HashCode(HASH_CODE_MAX)
         registry = self.entity_registries[entity_type]
-        if obj not in registry:
+        if obj_hash not in registry:
             tag = len(registry) + 1
-            registry[obj] = Entity(entity_type, tag)
+            registry[obj_hash] = Entity(entity_type, tag)
+            self.shape_lookup[obj_hash] = casted_shape
 
     def select(self, obj: CQObject):
         entity_type = CQ_TYPE_STR_MAPPING[type(obj)]
         registry = self.entity_registries[entity_type]
-        return registry[obj]
+        return registry[obj.wrapped.HashCode(HASH_CODE_MAX)]
 
     def select_many(
         self,
@@ -84,6 +89,7 @@ class CQEntityContext:
     ):
         entities = OrderedSet[Entity]()
         objs = target.vals() if isinstance(target, cq.Workplane) else target
+
         selected_objs = objs if type is None else CQLinq.select(objs, type)
         for obj in selected_objs:
             try:
@@ -105,34 +111,31 @@ class CQEntityContext:
         for selected_batch in selected_batches:
             yield self.select_many(selected_batch)
 
-    def _init_3d_objs(
-        self, target: Union[cq.Workplane, Sequence[CQObject]], level: CQType
-    ):
-        objs = CQLinq.select(target, "solid")
-        for compound in cast(Sequence[Union[cq.Solid, cq.Compound]], objs):
-            if level != "compound":
-                for solid in compound.Solids():
-                    if level != "solid":
-                        for shell in solid.Shells():
-                            if level != "shell":
-                                self._init_2d_objs(shell.Faces(), level)
-                            self.add(shell)
-                    self.add(solid)
-            if isinstance(compound, cq.Compound):
-                self.add(compound)
+    def _init_3d_objs(self, solids: Sequence[cq.Solid], level: CQType):
+        for solid in solids:
+            if level != "Solid":
+                for shell in CQLinq.select_occ(solid.wrapped, "Shell"):
+                    if level != "Shell":
+                        for face in CQLinq.select_occ(shell, "Face"):
+                            if level != "Face":
+                                self._init_2d_objs(CQLinq.select_occ(face, "Wire"), level)
+                            self.add(face)
+                    self.add(shell)
+            self.add(solid.wrapped)
 
-    def _init_2d_objs(
-        self, target: Union[cq.Workplane, Sequence[CQObject]], level: CQType2D
-    ):
-        objs = CQLinq.select(target, "face")
-        for face in cast(Sequence[cq.Face], objs):
-            if level != "face":
-                for wire in [face.outerWire(), *face.innerWires()]:
-                    if level != "wire":
-                        for edge in wire.Edges():
-                            if level != "edge":
-                                for vertex in edge.Vertices():
+    def _init_2d_objs(self, faces: Iterable[Union[TopoDS_Shape, CQObject]], level: CQType):
+        for face in faces:
+            # assert isinstance(face, (cq.Face, TopoDS_Shape)), "Only faces are supported in 2D mode"
+            occ_face = face.wrapped if isinstance(face, cq.Shape) else face
+            if level != "Face":
+                for wire in CQLinq.select_occ(
+                    face.wrapped if isinstance(face, cq.Face) else face, "Wire"
+                ):
+                    if level != "Wire":
+                        for edge in CQLinq.select_occ(wire, "Edge"):
+                            if level != "Edge":
+                                for vertex in CQLinq.select_occ(edge, "Vertex"):
                                     self.add(vertex)
                             self.add(edge)
                     self.add(wire)
-            self.add(face)
+            self.add(occ_face)

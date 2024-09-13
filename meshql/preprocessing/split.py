@@ -39,7 +39,7 @@ class Split:
         self.pending_splits = []
         if refresh:
             self.ql._ctx.region_groups = None
-            self.face_edge_groups = CQLinq.groupBy(self.ql._workplane, "face", "edge")
+            self.face_edge_groups = CQLinq.groupBy(self.ql._workplane, "Face", "Edge")
         return split_workplane
 
     def push(self, split_shapes: Union[cq.Shape, Sequence[cq.Shape]]):
@@ -84,7 +84,7 @@ class Split:
         copied_selection = deepcopy(selection)
         if region_set_operation:
             copied_selection.region_set_operation = region_set_operation
-        return ql.select(copied_selection, "edge")
+        return ql.select(copied_selection, "Edge")
 
     def from_ratios(
         self,
@@ -136,7 +136,7 @@ class Split:
                 target = self.ql._workplane
 
             nearest_face = cast(
-                cq.Face, CQLinq.find_nearest(target, edge, shape_type="face")
+                cq.Face, CQLinq.find_nearest(target, edge, shape_type="Face")
             )
             normal_vec = (
                 CQUtils.normalize(nearest_face.normalAt((start_point + end_point) / 2))
@@ -152,7 +152,6 @@ class Split:
         self.apply(refresh=True)
         return on_split(self.ql)
 
-
     def from_normals(
         self,
         select: Optional[GeometryQL] = None,
@@ -167,7 +166,7 @@ class Split:
         offset = to_vec(np.radians(list(angle_offset)))
         filtered_edges = selected_ql._workplane.vals()
         assert len(filtered_edges) > 0, "No edges found for selection"
-        
+
         split_faces = list[cq.Shape]()
         snap_edges = OrderedSet[cq.Edge]()
         for edge in filtered_edges:

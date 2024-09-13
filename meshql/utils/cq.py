@@ -1,31 +1,47 @@
-from dataclasses import dataclass, field
 import hashlib
 import cadquery as cq
 from cadquery.cq import CQObject
-from typing import Iterable, Literal, Optional, Sequence, Union
+from cadquery.occ_impl.shape_protocols import Shapes as CQShapes
+from cadquery.occ_impl.shapes import inverse_shape_LUT
+
+from typing import Iterable, Literal, Optional, Sequence, Union, cast
 import numpy as np
 from meshql.utils.types import Axis, OrderedSet, to_vec
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
-from OCP.TopoDS import TopoDS, TopoDS_Vertex
+from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Solid, TopoDS_Shell, TopoDS_Face, TopoDS_Wire, TopoDS_Edge, TopoDS_Vertex, TopoDS_Shape
 from OCP.BRep import BRep_Tool
+from OCP.TopTools import (
+    TopTools_IndexedMapOfShape,
+)
+from OCP.TopExp import TopExp  # Topology explorer
 
 import numpy as np
 import cadquery as cq
 
-CQType2D = Literal["face", "wire", "edge", "vertex"]
-CQType = Union[Literal["compound", "solid", "shell"], CQType2D]
+CQType = CQShapes
 GroupType = Literal["split", "interior", "exterior"]
 CQEdgeOrFace = Union[cq.Edge, cq.Face]
 
 CQ_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
-    cq.Compound: "compound",
-    cq.Solid: "solid",
-    cq.Shell: "shell",
-    cq.Face: "face",
-    cq.Wire: "wire",
-    cq.Edge: "edge",
-    cq.Vertex: "vertex",
+    cq.Compound: "Compound",
+    cq.Solid: "Solid",
+    cq.Shell: "Shell",
+    cq.Face: "Face",
+    cq.Wire: "Wire",
+    cq.Edge: "Edge",
+    cq.Vertex: "Vertex",
 }
+
+OCC_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
+    TopoDS_Compound: "Compound",
+    TopoDS_Solid: "Solid",  
+    TopoDS_Shell: "Shell",
+    TopoDS_Face: "Face",
+    TopoDS_Wire: "Wire",
+    TopoDS_Edge: "Edge",
+    TopoDS_Vertex: "Vertex",
+}
+
 CQ_TYPE_CLASS_MAPPING = dict(
     zip(CQ_TYPE_STR_MAPPING.values(), CQ_TYPE_STR_MAPPING.keys())
 )
@@ -34,6 +50,8 @@ CQ_TYPE_RANKING = dict(
     zip(CQ_TYPE_STR_MAPPING.keys(), range(len(CQ_TYPE_STR_MAPPING) + 1)[::-1])
 )
 ShapeChecksum = str
+
+
 class CQUtils:
     checksum_cache: dict[ShapeChecksum, str] = {}
 
@@ -177,7 +195,6 @@ class CQUtils:
         t = cq.Matrix([[x, 0, 0, 0], [0, y, 0, 0], [0, 0, z, 0], [0, 0, 0, 1]])
         return shape.transformGeometry(t)
 
-
     @staticmethod
     def is_clockwise(edge1: cq.Edge, edge2: cq.Edge):
         xy_plane = cq.Plane.XY()
@@ -190,7 +207,6 @@ class CQUtils:
         ) - edge2.startPoint().projectToPlane(xy_plane)
         normal = (end_vec.cross(start_vec)).normalized()
         return (normal.x + normal.y + normal.z) < 0
-
 
     @staticmethod
     def vertex_to_Tuple(vertex: TopoDS_Vertex):
@@ -219,12 +235,11 @@ class CQUtils:
         checksum = hashlib.md5(vertices_hash).hexdigest()
         CQUtils.checksum_cache[shape] = checksum
         return checksum
-    
+
+
     @staticmethod
-    def compare_shapes(shape1: cq.Shape, shape2: cq.Shape):
-        return CQUtils.get_part_checksum(shape1) == CQUtils.get_part_checksum(shape2)
-    
-    @staticmethod
-    def compare_vectors(vec1: cq.Vector, vec2: cq.Vector, atol=1E-3):
-        is_close =  np.isclose(vec1.toTuple(), vec2.toTuple(), atol=atol)
+    def compare_vectors(vec1: cq.Vector, vec2: cq.Vector, atol=1e-5):
+        is_close = np.isclose(vec1.toTuple(), vec2.toTuple(), atol=atol)
         return is_close.all()
+    
+  

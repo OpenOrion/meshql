@@ -65,13 +65,13 @@ from OCP.TopAbs import (
 )
 
 ENUM_MAPPING = {
-    "compound": TopAbs_COMPOUND,
-    "solid": TopAbs_SOLID,
-    "shell": TopAbs_SHELL,
-    "face": TopAbs_FACE,
-    "wire": TopAbs_WIRE,
-    "edge": TopAbs_EDGE,
-    "vertex": TopAbs_VERTEX,
+    "Compound": TopAbs_COMPOUND,
+    "Solid": TopAbs_SOLID,
+    "Shell": TopAbs_SHELL,
+    "Face": TopAbs_FACE,
+    "Wire": TopAbs_WIRE,
+    "Edge": TopAbs_EDGE,
+    "Vertex": TopAbs_VERTEX,
 }
 
 

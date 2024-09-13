@@ -52,9 +52,9 @@ def plot_cq(
 
     fig = go.Figure(layout=go.Layout(title=go.layout.Title(text=title)))
     if isinstance(target, cq.Workplane):
-        edge_groups = [[edge] for edge in CQLinq.select(target, "edge")]
+        edge_groups = [[edge] for edge in CQLinq.select(target, "Edge")]
     elif isinstance(target, CQObject):
-        edge_groups = [[edge] for edge in CQLinq.select(target, "edge")]
+        edge_groups = [[edge] for edge in CQLinq.select(target, "Edge")]
     elif isinstance(target, Sequence) and isinstance(target[0], CQObject):
         edge_groups = [cast(Sequence[CQObject], target)]
 

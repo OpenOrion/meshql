@@ -3,11 +3,17 @@ from functools import cached_property
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
-
-import numpy as np
 from meshql.utils.cq import CQ_TYPE_STR_MAPPING, CQType, CQUtils, GroupType
 from meshql.utils.types import OrderedSet
 import cadquery as cq
+from cadquery.occ_impl.shape_protocols import Shapes as CQShapes
+from cadquery.occ_impl.shapes import inverse_shape_LUT
+from OCP.TopoDS import TopoDS_Shape
+from OCP.TopTools import (
+    TopTools_IndexedMapOfShape,
+)
+from OCP.TopExp import TopExp  # Topology explorer
+
 
 SetOperation = Literal["union", "intersection", "difference"]
 
@@ -23,29 +29,10 @@ class DirectedPath:
     def __post_init__(self):
         assert isinstance(self.edge, cq.Edge), "edge must be an edge"
         assert self.direction in [-1, 1], "direction must be -1 or 1"
-        self.start = self.edge.startPoint() if self.direction == 1 else self.edge.endPoint()
-        self.end = self.edge.endPoint() if self.direction == 1 else self.edge.startPoint()
 
-        # self.start = self.vertices[0]
-        # self.end = self.vertices[-1]
-        # assert np.allclose(self.start.Center().toTuple(), start.toTuple(), 5), "start point does not match"
-        # assert np.allclose(self.end.Center().toTuple(), end.toTuple(), 5), "end point does not match"
-
-       # assert self.end.Center() == end, "end point does not match"
-
-
-    @cached_property
-    def vertices(self):
-        return self.edge.Vertices()[:: self.direction]
-
-    @property
-    def start_vertex(self):
-        return self.vertices[0]
-
-    @property
-    def end_vertex(self):
-        return self.vertices[-1]
-
+        self.vertices = self.edge.Vertices()[:: self.direction]
+        self.start_vertex = self.vertices[0]
+        self.end_vertex = self.vertices[-1]
 
     def __eq__(self, __value: object) -> bool:
         return self.edge == __value
@@ -86,21 +73,28 @@ class CQLinq:
             assert isinstance(cq_obj, cq.Shape), "target must be a shape"
             if shape_type is None:
                 result.append(cq_obj)
-            elif shape_type == "compound":
+            elif shape_type == "Compound":
                 result.extend(cq_obj.Compounds())
-            elif shape_type == "solid":
+            elif shape_type == "Solid":
                 result.extend(cq_obj.Solids())
-            elif shape_type == "shell":
+            elif shape_type == "Shell":
                 result.extend(cq_obj.Shells())
-            elif shape_type == "face":
+            elif shape_type == "Face":
                 result.extend(cq_obj.Faces())
-            elif shape_type == "wire":
+            elif shape_type == "Wire":
                 result.extend(cq_obj.Wires())
-            elif shape_type == "edge":
+            elif shape_type == "Edge":
                 result.extend(cq_obj.Edges())
-            elif shape_type == "vertex":
+            elif shape_type == "Vertex":
                 result.extend(cq_obj.Vertices())
         return result
+
+    @staticmethod
+    def select_occ(wrapped: TopoDS_Shape, topo_type: CQShapes):
+        shape_set = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(wrapped, inverse_shape_LUT[topo_type], shape_set)
+
+        return cast(Iterable[TopoDS_Shape], shape_set)
 
     @staticmethod
     def select_batch(
@@ -155,48 +149,31 @@ class CQLinq:
 
     @staticmethod
     def sortByConnect(target: Union[cq.Edge, Sequence[cq.Edge]]):
-        def connect_and_pop(cq_edge, sorted_paths, index, reverse=False):
-            """Helper function to add a DirectedPath and remove edge from list."""
-            sorted_paths.append(DirectedPath(cq_edge, direction=-1 if reverse else 1))
-            cq_edges.pop(index)
-
         unsorted_cq_edges = [target] if isinstance(target, cq.Edge) else target
         cq_edges = list(unsorted_cq_edges[1:])
         sorted_paths = [DirectedPath(unsorted_cq_edges[0])]
-
         while cq_edges:
             for i, cq_edge in enumerate(cq_edges):
-                start, end = cq_edge.startPoint(), cq_edge.endPoint()
-                sorted_end, sorted_start = sorted_paths[-1].end, sorted_paths[0].start
-
-                if CQUtils.compare_vectors(start, sorted_end):
-                    connect_and_pop(cq_edge, sorted_paths, i)
+                edge_vertices = cq_edge.Vertices()
+                if  edge_vertices[0].hashCode() == sorted_paths[-1].end_vertex.hashCode():
+                    sorted_paths.append(DirectedPath(cq_edge))
+                    cq_edges.pop(i)
                     break
-                elif CQUtils.compare_vectors(end, sorted_end):
-                    connect_and_pop(cq_edge, sorted_paths, i, reverse=True)
+                elif edge_vertices[-1].hashCode() == sorted_paths[-1].end_vertex.hashCode():
+                    sorted_paths.append(DirectedPath(cq_edge, direction=-1))
+                    cq_edges.pop(i)
                     break
-                elif CQUtils.compare_vectors(start, sorted_start):
+                elif edge_vertices[0].hashCode() == sorted_paths[0].start_vertex.hashCode():
                     sorted_paths.insert(0, DirectedPath(cq_edge, direction=-1))
                     cq_edges.pop(i)
                     break
-                else:
-                    edge_vertices = cq_edge.Vertices()
-                    if edge_vertices[0].toTuple() == sorted_paths[-1].end_vertex.toTuple():
-                        connect_and_pop(cq_edge, sorted_paths, i)
-                        break
-                    elif edge_vertices[-1].toTuple() == sorted_paths[-1].end_vertex.toTuple():
-                        connect_and_pop(cq_edge, sorted_paths, i, reverse=True)
-                        break
-                    elif edge_vertices[0].toTuple() == sorted_paths[0].start_vertex.toTuple():
-                        sorted_paths.insert(0, DirectedPath(cq_edge, direction=-1))
-                        cq_edges.pop(i)
-                        break
+
             else:
                 raise ValueError("Edges do not form a closed loop")
-
-        assert CQUtils.compare_vectors(sorted_paths[-1].end, sorted_paths[0].start), "Edges do not form a closed loop"
+        assert (
+            sorted_paths[-1].end_vertex.hashCode() == sorted_paths[0].start_vertex.hashCode()
+        ), "Edges do not form a closed loop"
         return sorted_paths
-
 
     # TODO: clean up this function
     @staticmethod
@@ -213,8 +190,8 @@ class CQLinq:
         add_wire_to_group = lambda wires, group: group.update(
             [
                 *wires,
-                *CQLinq.select(wires, "edge"),
-                *CQLinq.select(wires, "vertex"),
+                *CQLinq.select(wires, "Edge"),
+                *CQLinq.select(wires, "Vertex"),
             ]
         )
 

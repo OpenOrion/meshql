@@ -61,7 +61,7 @@ class SetTransfiniteEdge(SingleEntityTransaction):
         super().__post_init__()
 
     def before_gen(self):
-        assert self.entity.type == "edge", "SetTransfiniteEdge only accepts edges"
+        assert self.entity.type == "Edge", "SetTransfiniteEdge only accepts edges"
         num_nodes = self.num_elems + 1
         gmsh.model.mesh.setTransfiniteCurve(
             self.entity.tag, num_nodes, self.mesh_type, self.coef
@@ -80,7 +80,7 @@ class SetTransfiniteFace(SingleEntityTransaction):
     "corner point tags for transfinite face"
 
     def before_gen(self):
-        assert self.entity.type == "face", "SetTransfiniteFace only accepts faces"
+        assert self.entity.type == "Face", "SetTransfiniteFace only accepts faces"
         corner_tags = [corner.tag for corner in self.corners] if self.corners else []
         gmsh.model.mesh.setTransfiniteSurface(
             self.entity.tag, self.arrangement, corner_tags
@@ -96,7 +96,7 @@ class SetTransfiniteSolid(SingleEntityTransaction):
     "corner point tags for transfinite face"
 
     def before_gen(self):
-        assert self.entity.type == "solid", "SetTransfiniteSolid only accepts solids"
+        assert self.entity.type == "Solid", "SetTransfiniteSolid only accepts solids"
         corner_tags = [corner.tag for corner in self.corners] if self.corners else []
         gmsh.model.mesh.setTransfiniteVolume(self.entity.tag, corner_tags)
 
@@ -108,7 +108,7 @@ class SetCompound(MultiEntityTransaction):
 
     def before_gen(self):
         entity_tags = [entity.tag for entity in self.entities]
-        gmsh.model.mesh.setCompound(ENTITY_DIM_MAPPING["edge"], entity_tags)
+        gmsh.model.mesh.setCompound(ENTITY_DIM_MAPPING["Edge"], entity_tags)
 
 
 @dataclass(eq=False)

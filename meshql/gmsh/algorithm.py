@@ -68,7 +68,7 @@ class SetMeshAlgorithm2D(GmshTransaction):
 
     def before_gen(self):
         if self.entity:
-            assert self.entity.type == "face", "Can only set per face for edges"
+            assert self.entity.type == "Face", "Can only set per face for edges"
             gmsh.model.mesh.setAlgorithm(
                 self.entity.dim, self.entity.tag, MESH_ALGORITHM_2D_MAPPING[self.type]
             )

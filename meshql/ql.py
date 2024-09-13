@@ -152,7 +152,7 @@ class GeometryQL:
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
         selection = Selection(selector, tag, type, indices, filter)
-        self.select(selection, "solid")
+        self.select(selection, "Solid")
 
     def faces(
         self,
@@ -163,7 +163,7 @@ class GeometryQL:
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
         selection = Selection(selector, tag, type, indices, filter)
-        return self.select(selection, "face")
+        return self.select(selection, "Face")
 
     def edges(
         self,
@@ -174,7 +174,7 @@ class GeometryQL:
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
         selection = Selection(selector, tag, type, indices, filter)
-        return self.select(selection, "edge")
+        return self.select(selection, "Edge")
 
     def wires(
         self,
@@ -185,7 +185,7 @@ class GeometryQL:
         filter: Optional[Callable[[CQObject], bool]] = None,
     ):
         selection = Selection(selector, tag, type, indices, filter)
-        return self.select(selection, "wire")
+        return self.select(selection, "Wire")
 
     def vertices(
         self,

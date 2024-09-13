@@ -43,7 +43,7 @@ class UnstructuredBoundaryLayer(MultiEntityTransaction):
         dim_tags = []
         for face in self.entities:
             assert (
-                face.dim == ENTITY_DIM_MAPPING["face"]
+                face.dim == ENTITY_DIM_MAPPING["Face"]
             ), "boundary layer can only be applied to faces"
             dim_tags.append((face.dim, face.tag))
 
@@ -80,7 +80,7 @@ class UnstructuredBoundaryLayer2D(MultiEntityTransaction):
         edge_tags = []
         for edge in self.entities:
             assert (
-                edge.dim == ENTITY_DIM_MAPPING["edge"]
+                edge.dim == ENTITY_DIM_MAPPING["Edge"]
             ), "boundary layer can only be applied to edges"
             edge_tags.append(edge.tag)
 
