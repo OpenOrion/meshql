@@ -65,7 +65,7 @@ class SplitUtils:
         angle: VectorSequence = (0, 0, 1),
         sizing: Literal["maxDim", "infinite"] = "maxDim",
     ):
-        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * 10
+        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * CQUtils.max_dim_multiplier
         base_pnt_vec = to_vec(base_pnt)
         angle_vec = to_vec(np.radians(list(angle)))
         if sizing == "maxDim":
@@ -82,7 +82,7 @@ class SplitUtils:
         snap: SnapType = False,
         snap_edges=OrderedSet[cq.Edge](),
     ):
-        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * 10
+        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * CQUtils.max_dim_multiplier
         normal_vector = CQUtils.normalize(to_vec(axis))
         towards_edge = edge.translate(normal_vector * maxDim)
         away_edge = edge.translate(-normal_vector * maxDim)

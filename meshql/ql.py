@@ -74,13 +74,12 @@ class GeometryQL:
         else:
             workplane_3d = imported_workplane
 
-        self._workplane = workplane_3d
-        self._ctx.initial_workplane = workplane_3d
+        self._workplane = self._ctx.initial_workplane = workplane_3d
 
         if on_preprocess:
-            self.is_split = True
-            self._workplane = on_preprocess(self).apply()
-
+            self._ctx.is_split = True
+            self._workplane = self._ctx.initial_workplane = on_preprocess(self).apply(refresh=True)
+        
         if self._ctx.is_2d:
             # fuses top faces to appear as one Compound in GMSH
             faces = self._workplane.faces(">Z").vals()

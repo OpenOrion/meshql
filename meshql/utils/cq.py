@@ -54,7 +54,7 @@ ShapeChecksum = str
 
 class CQUtils:
     checksum_cache: dict[ShapeChecksum, str] = {}
-
+    max_dim_multiplier = 10
     @staticmethod
     def is_interior_face(face: CQObject):
         assert isinstance(face, cq.Face), "object must be a face"
