@@ -90,6 +90,7 @@ class GeometryQL:
         ql = self
         for _ in range(num):
             ql = ql._prev_ql
+        assert ql is not None, "previous ql state not defined"
         return ql
 
     def select(
