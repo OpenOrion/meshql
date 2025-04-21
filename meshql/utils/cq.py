@@ -354,11 +354,13 @@ class CQExtensions:
                 workplane = cq.importers.importDXF(target)
             else:
                 raise ValueError(f"Unsupported file type: {target}")
+        elif isinstance(target, cq.Workplane):
+            workplane = target
+
         elif isinstance(target, Iterable):
             workplane = cq.Workplane().newObject(target)
         else:
-            workplane = target
-
+            raise ValueError(f"Unsupported type: {type(target)}")
         return workplane
 
 
