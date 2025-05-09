@@ -183,11 +183,11 @@ class CQUtils:
                 raise ValueError(f"Unsupported file type: {target}")
         elif isinstance(target, cq.Workplane):
             workplane = target
-        elif isinstance(target, Sequence):
+
+        elif isinstance(target, Iterable):
             workplane = cq.Workplane().newObject(target)
         else:
-            raise ValueError("Invalid target type")
-
+            raise ValueError(f"Unsupported type: {type(target)}")
         return workplane
 
     @staticmethod
