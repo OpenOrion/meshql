@@ -27,5 +27,5 @@
     "python.linting.pylintArgs": [
         "--extension-pkg-whitelist=numpy"
     ],
-    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.typeCheckingMode": "off",
 }

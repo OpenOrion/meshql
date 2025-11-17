@@ -1,12 +1,7 @@
-
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import Sequence
-import numpy.typing as npt
-import numpy as np
-from meshql.utils.types import NumpyFloat
 
-class ElementType(Enum):
+
+class GmshElementType(Enum):
     LINE = 1
     TRIANGLE = 2
     QUADRILATERAL = 3
@@ -17,12 +12,14 @@ class ElementType(Enum):
     POINT = 15
 
 
-@dataclass
-class Mesh:
-    dim: int
-    elements: Sequence[npt.NDArray[np.uint16]]
-    element_types: Sequence[ElementType]
-    points: npt.NDArray[NumpyFloat]
-    markers: dict[str, Sequence[npt.NDArray[np.uint16]]]
-    marker_types: dict[str, Sequence[ElementType]]
-    target_points: dict[str, dict[np.uint16, str]] = field(default_factory=dict)
+# Complete VTK to GMSH element type mapping
+VTK_TO_GMSH_ELEMENT_TYPE = {
+    1: 15,   # VTK_VERTEX -> POINT
+    3: 1,    # VTK_LINE -> LINE
+    5: 2,    # VTK_TRIANGLE -> TRIANGLE
+    9: 3,    # VTK_QUAD -> QUADRILATERAL
+    10: 4,   # VTK_TETRA -> TETRAHEDRON
+    12: 5,   # VTK_HEXAHEDRON -> HEXAHEDRON
+    13: 6,   # VTK_WEDGE -> PRISM
+    14: 7,   # VTK_PYRAMID -> PYRAMID
+}

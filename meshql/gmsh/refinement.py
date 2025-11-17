@@ -1,11 +1,16 @@
 import gmsh
 from typing import Callable, Union
 from dataclasses import dataclass
-from meshql.entity import Entity
-from meshql.transaction import Transaction, SingleEntityTransaction, MultiEntityTransaction
+from meshql.gmsh.entity import Entity
+from meshql.gmsh.transaction import (
+    GmshTransaction,
+    SingleEntityTransaction,
+    MultiEntityTransaction,
+)
 from meshql.utils.types import OrderedSet
 
-@dataclass(eq=False)
+
+
 class Recombine(SingleEntityTransaction):
     entity: Entity
     "Entity to recombine for"
@@ -16,11 +21,12 @@ class Recombine(SingleEntityTransaction):
     def before_gen(self):
         gmsh.model.mesh.setRecombine(self.entity.dim, self.entity.tag, self.angle)
 
-@dataclass(eq=False)
+
+
 class SetSmoothing(SingleEntityTransaction):
     entity: Entity
     "Entity to smooth for"
-    
+
     num_smooths: int = 1
     "Number of times to smooth the mesh"
 
@@ -28,16 +34,17 @@ class SetSmoothing(SingleEntityTransaction):
         gmsh.model.mesh.setSmoothing(self.entity.dim, self.entity.tag, self.num_smooths)
 
 
-@dataclass(eq=False)
-class Refine(Transaction):
+
+class Refine(GmshTransaction):
     num_refines: int = 1
     "Number of times to refine the mesh"
-    
+
     def after_gen(self):
         for _ in range(self.num_refines):
             gmsh.model.mesh.refine()
 
-@dataclass(eq=False)
+
+
 class SetMeshSize(MultiEntityTransaction):
     entities: OrderedSet[Entity]
     "Entities to set mesh sizes for"
@@ -50,4 +57,4 @@ class SetMeshSize(MultiEntityTransaction):
         if isinstance(self.size, float):
             gmsh.model.mesh.setSize(point_tags, self.size)
         else:
-            gmsh.model.mesh.setSizeCallback(lambda dim, tag, x, y, z, lc: lc if tag in point_tags else self.size(x, y, z)) # type: ignore
+            gmsh.model.mesh.setSizeCallback(lambda dim, tag, x, y, z, lc: lc if tag in point_tags else self.size(x, y, z))  # type: ignore

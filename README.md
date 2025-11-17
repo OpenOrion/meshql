@@ -13,14 +13,25 @@ meshql is a declarative tool that parametrically generates meshes compliant with
 [https://www.youtube.com/watch?v=ltbxRsuvaLw](https://www.youtube.com/watch?v=ltbxRsuvaLw)
 
 # Install
+
+## From PyPI (Coming Soon)
+```bash
+# Basic installation
+conda install -c conda-forge gmsh python-gmsh
+pip install meshql
+
+# With GMSH support
+pip install meshql[gmsh]
 ```
-# Cadquery dependency install seperately since for some systems conda install is necessary
+
+## From Source
+```bash
+# Cadquery dependency install separately since for some systems conda install is necessary
 # Please view https://github.com/CadQuery/cadquery if install doesn't work for your system
 conda install -c conda-forge -c cadquery cadquery=master
 
-
+# Install from source
 pip install git+https://github.com/OpenOrion/meshql.git#egg=meshql
-
 ```
 
 
@@ -67,11 +78,38 @@ with GeometryQL() as geo:
 ![Inviscid Wedge](./assets/wing.png)
 
 
-# Developement Setup
-```
+# Development Setup
+
+## Quick Start
+```bash
 git clone https://github.com/OpenOrion/meshql.git
 cd meshql
-pip install -r requirements_dev.txt
+make install
+```
+
+## Available Make Commands
+```bash
+# Install package in development mode with GMSH support
+make install
+
+# Build Python package
+make build-package
+
+# Run tests
+make test
+
+# Clean build artifacts
+make clean
+
+# Quick local build (for testing)
+make build
+```
+
+## Manual Installation
+```bash
+git clone https://github.com/OpenOrion/meshql.git
+cd meshql
+pip install -e ".[gmsh]"
 ```
 
 # Help Wanted
