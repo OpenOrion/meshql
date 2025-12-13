@@ -3,7 +3,7 @@
 import unittest
 import cadquery as cq
 import numpy as np
-from meshql.ql import GeometryQL, GeometryQLContext
+from meshql.core.ql import GeometryQL, GeometryQLContext
 from meshql.preprocessing.split import Split
 
 
@@ -15,13 +15,16 @@ class SplitTest(unittest.TestCase):
         self.cube = cq.Workplane("XY").box(10, 10, 10)
         self.context = GeometryQLContext()
         self.geo_ql = GeometryQL(ctx=self.context, workplane=self.cube)
-        self.split = Split(self.geo_ql)
+        self.split = Split(workplane=self.cube)
 
     def test_split_state_initialization(self):
         """Test Split object initializes with correct state."""
-        self.assertEqual(self.split.ql, self.geo_ql)
+        self.assertEqual(self.split.workplane, self.cube)
         self.assertEqual(len(self.split.pending_splits), 0)
-        self.assertEqual(len(self.split.face_edge_groups), 0)
+        # face_edge_groups should now be computed from the actual cube geometry
+        self.assertGreater(len(self.split.face_edge_groups), 0)
+        # A cube has 12 edges, so face_edge_groups should have entries
+        self.assertEqual(len(self.split.face_edge_groups), 12)
 
     def test_pending_splits_accumulation(self):
         """Test that split operations accumulate in pending_splits."""
@@ -152,8 +155,8 @@ class SplitTest(unittest.TestCase):
         self.split.from_plane(base_pnt=(0, 0, 0), angle=(0, 0, 1))
 
         # Apply the split
-        result_workplane = self.split.apply()
-
+        applied_split = self.split.apply()
+        result_workplane = applied_split.workplane
         # Verify we get more solids after splitting
         result_solids = len(result_workplane.solids().vals())
         self.assertGreaterEqual(result_solids, initial_solids)
@@ -171,9 +174,9 @@ class SplitTest(unittest.TestCase):
         self.assertEqual(len(self.split.pending_splits), 2)
 
         # Apply and verify state is cleared
-        result = self.split.apply()
+        applied_split = self.split.apply()
         self.assertEqual(len(self.split.pending_splits), 0)
-        self.assertIsInstance(result, cq.Workplane)
+        self.assertIsInstance(applied_split.workplane, cq.Workplane)
 
     def test_chaining_preserves_split_state(self):
         """Test that method chaining correctly accumulates splits."""
@@ -260,7 +263,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_complex_geometry_split_state_management(self):
         """Test that complex geometry maintains proper split state."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Add multiple diverse splits
         split.from_plane(base_pnt=(0, 0, 5))  # Horizontal plane
@@ -278,7 +281,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_multiple_line_sets_geometric_properties(self):
         """Test that multiple line sets create geometrically consistent split faces."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Define grid of lines
         horizontal_lines = [((0, 5, 0), (20, 5, 0)), ((0, 15, 0), (20, 15, 0))]
@@ -308,7 +311,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_applied_splits_modify_geometry_count(self):
         """Test that applying splits actually increases geometry complexity."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Count initial solid pieces
         initial_solids = len(self.complex_shape.solids().vals())
@@ -318,7 +321,8 @@ class SplitIntegrationTest(unittest.TestCase):
         split.from_plane(base_pnt=(0, 0, 0), angle=(90, 0, 0))  # Vertical cut
 
         # Apply splits
-        result_workplane = split.apply()
+        applied_split = split.apply()
+        result_workplane = applied_split.workplane
         result_solids = len(result_workplane.solids().vals())
 
         # Should have more solid pieces after splitting
@@ -326,7 +330,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_split_face_coverage_of_complex_geometry(self):
         """Test that split faces adequately cover complex geometry."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Get geometry bounding box
         bbox = self.complex_shape.val().BoundingBox()
@@ -344,7 +348,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_edge_based_splits_follow_geometry_features(self):
         """Test that edge-based splits respect geometry features."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Get an edge from the complex shape
         edges = self.complex_shape.edges().vals()
@@ -377,9 +381,9 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_refresh_parameter_affects_split_context(self):
         """Test that refresh parameter affects internal split state management."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
-        # Verify initial state
+        # Verify initial state``
         initial_face_edge_groups_count = len(split.face_edge_groups)
 
         # Add split and apply with refresh
@@ -396,7 +400,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_point_based_splits_create_accurate_faces(self):
         """Test that point-based splits create faces with accurate geometry."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Create a specific shaped face using points
         points = [(5, 5, 2), (15, 5, 2), (15, 15, 2), (5, 15, 2)]
@@ -416,14 +420,14 @@ class SplitIntegrationTest(unittest.TestCase):
 
     def test_sequential_apply_operations_maintain_state(self):
         """Test that multiple apply operations maintain correct state."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Add first set of splits
         split.from_plane(base_pnt=(5, 0, 0))
         split.from_plane(base_pnt=(-5, 0, 0))
 
         # Apply first set
-        first_result = split.apply()
+        first_applied_split = split.apply()
         self.assertEqual(len(split.pending_splits), 0)  # Should be cleared
 
         # Add second set of splits
@@ -434,17 +438,17 @@ class SplitIntegrationTest(unittest.TestCase):
         self.assertEqual(len(split.pending_splits), 2)
 
         # Apply second set
-        second_result = split.apply()
+        second_applied_split = split.apply()
         # Should be cleared again
         self.assertEqual(len(split.pending_splits), 0)
 
         # Both results should be valid workplanes
-        self.assertIsInstance(first_result, cq.Workplane)
-        self.assertIsInstance(second_result, cq.Workplane)
+        self.assertIsInstance(first_applied_split.workplane, cq.Workplane)
+        self.assertIsInstance(second_applied_split.workplane, cq.Workplane)
 
     def test_split_face_intersection_accuracy(self):
         """Test accuracy of split face intersections with complex geometry."""
-        split = Split(self.geo_ql)
+        split = Split(workplane=self.complex_shape)
 
         # Create split plane that should intersect the hole in complex geometry
         split.from_plane(base_pnt=(0, 0, 5))  # At middle height
@@ -470,13 +474,13 @@ class SplitIntegrationTest(unittest.TestCase):
         """Test split workflow properties when used as preprocessing function."""
         def preprocess_func(ql):
             return (
-                Split(ql)
+                Split(workplane=ql)
                 .from_plane(angle=(90, 0, 0))  # YZ plane
                 .from_plane(angle=(0, 90, 0))  # XZ plane
             )
 
         # Execute preprocessing
-        result = preprocess_func(self.geo_ql)
+        result = preprocess_func(self.complex_shape)
 
         # Verify split state
         self.assertEqual(len(result.pending_splits), 2)

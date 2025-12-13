@@ -1,9 +1,9 @@
 import gmsh
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal
 import numpy as np
 from meshql.gmsh.entity import ENTITY_DIM_MAPPING, Entity
-from meshql.gmsh.transaction import MultiEntityTransaction
+from meshql.core.transaction import MultiEntityTransaction
 from meshql.utils.types import OrderedSet
 
 
@@ -21,10 +21,10 @@ def get_boundary_ratio(length: float, normal_height: float, num_layers: int):
     return (length / normal_height) ** (1 / (num_layers - 1))
 
 
-
 class UnstructuredBoundaryLayer(MultiEntityTransaction):
     "geometric series boundary layer for unstructured meshes"
 
+    class_name: Literal["UnstructuredBoundaryLayer"] = "UnstructuredBoundaryLayer"
     entities: OrderedSet[Entity]
     "faces to be added to the boundary layer"
 
@@ -60,10 +60,10 @@ class UnstructuredBoundaryLayer(MultiEntityTransaction):
         gmsh.model.geo.addCurveLoop([c[1] for c in bnd])
 
 
-
 class UnstructuredBoundaryLayer2D(MultiEntityTransaction):
     "boundary layer for unstructured 2D meshes"
 
+    class_name: Literal["UnstructuredBoundaryLayer2D"] = "UnstructuredBoundaryLayer2D"
     entities: OrderedSet[Entity]
     "edges to be added to the boundary layer"
 

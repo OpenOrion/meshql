@@ -3,6 +3,8 @@
 import unittest
 from unittest.mock import Mock, patch
 import numpy as np
+import gmsh
+import meshly
 from meshql.mesh.mesh import GmshElementType
 from meshql.mesh.loaders import load_from_gmsh, load_to_gmsh
 
@@ -95,6 +97,83 @@ class MeshTest(unittest.TestCase):
             # Test that custom surface tag is used
         except Exception:
             pass
+
+    @patch('meshql.mesh.loaders.meshly')
+    @patch('meshql.mesh.loaders.gmsh')
+    def test_load_to_gmsh_with_markers(self, mock_gmsh, mock_meshly):
+        """Test load_to_gmsh with markers/physical groups."""
+        # Create a fake Mesh class for isinstance check
+        class FakeMesh:
+            def get_polygon_indices(self): pass
+            vertices = None
+            indices = None
+            cell_types = None
+            markers = None
+            marker_cell_types = None
+
+        mock_meshly.Mesh = FakeMesh
+
+        # Create a mock mesh with markers
+        mock_mesh = Mock(spec=FakeMesh)
+        # 3 vertices
+        mock_mesh.vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        # 1 triangle
+        mock_mesh.indices = np.array([0, 1, 2], dtype=np.uint32)
+        mock_mesh.cell_types = np.array(
+            [5], dtype=np.uint8)  # VTK_TRIANGLE = 5
+        mock_mesh.get_polygon_indices.return_value = np.array(
+            [[0, 1, 2]], dtype=np.uint32)
+
+        # Markers
+        # Marker "boundary": 2 edges (lines)
+        # Edge 1: nodes 0-1
+        # Edge 2: nodes 1-2
+        mock_mesh.markers = {
+            "boundary": np.array([0, 1, 1, 2], dtype=np.uint32)
+        }
+        # VTK_LINE = 3
+        mock_mesh.marker_cell_types = {
+            "boundary": np.array([3, 3], dtype=np.uint8)
+        }
+
+        # Mock GMSH methods
+        # name, dim, order, num_nodes
+        mock_gmsh.model.mesh.getElementProperties.return_value = (
+            "Line 2", 1, 1, 2
+        )
+        # tag for marker entity
+        mock_gmsh.model.addDiscreteEntity.side_effect = [1, 10]
+        mock_gmsh.model.addPhysicalGroup.return_value = 20  # tag for physical group
+
+        # Ensure isinstance passes
+        # We need to make sure that when loaders.py does isinstance(mesh, meshly.Mesh), it returns True.
+        # Since we patched meshly, meshly.Mesh is now FakeMesh.
+        # And mock_mesh is an instance of FakeMesh (or spec=FakeMesh which makes isinstance work if using Mock properly,
+        # but simple Mock(spec=FakeMesh) works with isinstance(obj, FakeMesh)).
+
+        # Actually, Mock(spec=Class) makes isinstance(mock, Class) return True.
+
+        load_to_gmsh(mock_mesh, surface_tag=1)
+
+        # Verify main mesh loading
+        mock_gmsh.model.addDiscreteEntity.assert_any_call(2, 1)
+        mock_gmsh.model.mesh.addNodes.assert_called_once()
+
+        # Verify marker loading
+        # 1. Check if discrete entity for marker was created (dim=1)
+        mock_gmsh.model.addDiscreteEntity.assert_any_call(1)
+
+        # 2. Check if elements were added to the marker entity
+        # We expect addElements to be called for the marker
+        # args: dim, tag, elementTypes, elementTags, nodeTags
+        # We can't easily check exact numpy arrays in assert_called_with,
+        # but we can check if it was called.
+        self.assertTrue(mock_gmsh.model.mesh.addElements.called)
+
+        # 3. Check physical group creation
+        mock_gmsh.model.addPhysicalGroup.assert_called_with(1, [10])
+        mock_gmsh.model.setPhysicalName.assert_called_with(1, 20, "boundary")
 
     def test_element_type_enum_completeness(self):
         """Test that GmshElementType enum has expected structure."""
@@ -252,3 +331,125 @@ class MeshIntegrationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LoaderRoundTripTest(unittest.TestCase):
+    """Test cases for load_to_gmsh and load_from_gmsh round-trip validation."""
+
+    def test_cube_mesh_roundtrip(self):
+        """Test that a cube mesh survives a round-trip through GMSH unchanged."""
+        # Create the cube mesh (same as in examples/cube.ipynb)
+        original_mesh = meshly.Mesh(
+            vertices=np.array([
+                [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5,
+                                                        0.5, -0.5], [-0.5, 0.5, -0.5],
+                [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5,
+                                                      0.5, 0.5], [-0.5, 0.5, 0.5]
+            ], dtype=np.float32),
+            indices=np.array([
+                0, 1, 2, 2, 3, 0,      # back face
+                1, 5, 6, 6, 2, 1,      # right face
+                5, 4, 7, 7, 6, 5,      # front face
+                4, 0, 3, 3, 7, 4,      # left face
+                3, 2, 6, 6, 7, 3,      # top face
+                4, 5, 1, 1, 0, 4       # bottom face
+            ], dtype=np.uint32),
+            index_sizes=np.array([3] * 12, dtype=np.uint32),
+            cell_types=np.array([5] * 12, dtype=np.uint8),  # VTK_TRIANGLE = 5
+            markers={
+                "top": np.array([3, 2, 6, 6, 7, 3], dtype=np.uint32),
+                "bottom": np.array([4, 5, 1, 1, 0, 4], dtype=np.uint32)
+            },
+            marker_cell_types={
+                "top": np.array([5, 5], dtype=np.uint8),  # 2 triangles
+                "bottom": np.array([5, 5], dtype=np.uint8)  # 2 triangles
+            }
+        )
+
+        # Initialize GMSH
+        gmsh.initialize()
+        gmsh.model.add("test_roundtrip")
+
+        try:
+            # Load mesh into GMSH
+            load_to_gmsh(original_mesh, surface_tag=1)
+
+            # Load it back from GMSH
+            reconstructed_mesh = load_from_gmsh()
+
+            # Compare vertices
+            np.testing.assert_allclose(
+                original_mesh.vertices,
+                reconstructed_mesh.vertices,
+                rtol=1e-6,
+                atol=1e-9,
+                err_msg="Vertices do not match after round-trip"
+            )
+
+            # Compare indices (need to sort for comparison since order may differ)
+            original_indices_sorted = np.sort(
+                original_mesh.indices.reshape(-1, 3), axis=0)
+            reconstructed_indices_sorted = np.sort(
+                reconstructed_mesh.indices.reshape(-1, 3), axis=0)
+            np.testing.assert_array_equal(
+                original_indices_sorted,
+                reconstructed_indices_sorted,
+                err_msg="Indices do not match after round-trip"
+            )
+
+            # Compare markers
+            self.assertEqual(
+                set(original_mesh.markers.keys()),
+                set(reconstructed_mesh.markers.keys()),
+                "Marker names do not match after round-trip"
+            )
+
+            for marker_name in original_mesh.markers:
+                original_marker_indices = np.sort(
+                    original_mesh.markers[marker_name].reshape(-1, 3), axis=0)
+                reconstructed_marker_indices = np.sort(
+                    reconstructed_mesh.markers[marker_name].reshape(-1, 3), axis=0)
+                np.testing.assert_array_equal(
+                    original_marker_indices,
+                    reconstructed_marker_indices,
+                    err_msg=f"Marker '{marker_name}' indices do not match after round-trip"
+                )
+
+        finally:
+            # Clean up GMSH
+            gmsh.finalize()
+
+    def test_simple_triangle_roundtrip(self):
+        """Test that a simple triangle mesh survives round-trip unchanged."""
+        original_mesh = meshly.Mesh(
+            vertices=np.array([
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0]
+            ], dtype=np.float32),
+            indices=np.array([0, 1, 2], dtype=np.uint32),
+            index_sizes=np.array([3], dtype=np.uint32),
+            cell_types=np.array([5], dtype=np.uint8),  # VTK_TRIANGLE = 5
+        )
+
+        gmsh.initialize()
+        gmsh.model.add("test_triangle")
+
+        try:
+            load_to_gmsh(original_mesh, surface_tag=1)
+            reconstructed_mesh = load_from_gmsh()
+
+            np.testing.assert_allclose(
+                original_mesh.vertices,
+                reconstructed_mesh.vertices,
+                rtol=1e-6,
+                atol=1e-9
+            )
+
+            np.testing.assert_array_equal(
+                original_mesh.indices,
+                reconstructed_mesh.indices
+            )
+
+        finally:
+            gmsh.finalize()

@@ -2,7 +2,10 @@ import cadquery as cq
 from cadquery.cq import CQObject
 from dataclasses import dataclass
 from typing import Iterable, Optional, OrderedDict, Sequence, Union, cast
-from meshql.utils.cq import OCC_TYPE_STR_MAPPING, CQType, CQ_TYPE_STR_MAPPING
+
+from pydantic import BaseModel
+from meshql.utils.cq import CQUtils
+from meshql.utils.types import OCC_TYPE_STR_MAPPING, CQType, CQ_TYPE_STR_MAPPING
 from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import OrderedSet
 from OCP.TopoDS import TopoDS_Shape, TopoDS_Face
@@ -16,8 +19,7 @@ ENTITY_DIM_MAPPING: dict[CQType, int] = {
 }
 
 
-@dataclass
-class Entity:
+class Entity(BaseModel):
     type: CQType
     "dimension type of the entity."
 
@@ -45,11 +47,11 @@ class Entity:
         return hash((self.type, self.tag))
 
 
-class CQEntityContext:
+class CQEntityMapper:
     "Maps OCC objects to gmsh entity tags"
 
     def __init__(self, workplane: cq.Workplane, level: CQType = "Edge") -> None:
-        self.dimension = 3 if len(workplane.solids().vals()) else 2
+        self.dimension = CQUtils.get_dimension(workplane)
 
         self.entity_registries: dict[CQType, OrderedDict[int, Entity]] = {
             "Compound": OrderedDict[int, Entity](),
@@ -74,7 +76,7 @@ class CQEntityContext:
         registry = self.entity_registries[entity_type]
         if obj_hash not in registry:
             tag = len(registry) + 1
-            registry[obj_hash] = Entity(entity_type, tag)
+            registry[obj_hash] = Entity(type=entity_type, tag=tag)
             self.shape_lookup[obj_hash] = casted_shape
 
     def select(self, obj: CQObject):
@@ -118,7 +120,8 @@ class CQEntityContext:
                     if level != "Shell":
                         for face in CQLinq.select_occ(shell, "Face"):
                             if level != "Face":
-                                self._init_2d_objs(CQLinq.select_occ(face, "Wire"), level)
+                                self._init_2d_objs(
+                                    CQLinq.select_occ(face, "Wire"), level)
                             self.add(face)
                     self.add(shell)
             self.add(solid.wrapped)

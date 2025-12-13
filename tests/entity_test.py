@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import Mock, patch
 import cadquery as cq
-from meshql.gmsh.ql import GmshGeometryQL, GmshGeometryQLContext
-from meshql.gmsh.entity import Entity, CQEntityContext, ENTITY_DIM_MAPPING
-from meshql.gmsh.transaction import GmshTransaction, MultiEntityTransaction, GmshTransactionContext
+from meshql.gmsh.ql import GmshGeometryQL
+from meshql.gmsh.entity import Entity, CQEntityMapper, ENTITY_DIM_MAPPING
+from meshql.core.transaction import Transaction, MultiEntityTransaction, TransactionContext
 from meshql.gmsh.physical_group import SetPhysicalGroup
 from meshql.gmsh.boundary_layer import UnstructuredBoundaryLayer, UnstructuredBoundaryLayer2D
 from meshql.gmsh.transfinite import SetTransfiniteEdge, SetTransfiniteFace, SetTransfiniteSolid
@@ -34,10 +34,9 @@ class EntityTest(unittest.TestCase):
 
     def test_entity_invalid_type_error(self):
         """Test Entity raises error for invalid types."""
-        entity = Entity(type="InvalidType", tag=1)
-        with self.assertRaises(ValueError) as context:
-            _ = entity.dim
-        self.assertIn("not supported", str(context.exception))
+        from pydantic_core import ValidationError
+        with self.assertRaises(ValidationError):
+            entity = Entity(type="InvalidType", tag=1)
 
     def test_entity_equality_and_hashing(self):
         """Test Entity equality and hash functionality."""
@@ -65,13 +64,13 @@ class EntityTest(unittest.TestCase):
     def test_cq_entity_context_3d_geometry_detection(self):
         """Test CQEntityContext correctly detects 3D geometry."""
         cube = cq.Workplane("XY").box(10, 10, 10)
-        context = CQEntityContext(cube, level="Face")
+        context = CQEntityMapper(cube, level="Face")
         self.assertEqual(context.dimension, 3, "Cube should be detected as 3D")
 
     def test_cq_entity_context_2d_geometry_detection(self):
         """Test CQEntityContext correctly detects 2D geometry."""
         square = cq.Workplane("XY").rect(10, 10)
-        context = CQEntityContext(square, level="Edge")
+        context = CQEntityMapper(square, level="Edge")
         self.assertEqual(context.dimension, 2,
                          "Square should be detected as 2D")
 
@@ -79,7 +78,7 @@ class EntityTest(unittest.TestCase):
         """Test that CQEntityContext properly registers entities during initialization."""
         cube = cq.Workplane("XY").box(10, 10, 10)
         # Go down to vertex level
-        context = CQEntityContext(cube, level="Vertex")
+        context = CQEntityMapper(cube, level="Vertex")
 
         # Verify that entities are actually registered in appropriate registries
         self.assertGreater(
@@ -102,7 +101,7 @@ class EntityTest(unittest.TestCase):
     def test_cq_entity_context_add_method_functionality(self):
         """Test CQEntityContext add method actually adds entities correctly."""
         cube = cq.Workplane("XY").box(10, 10, 10)
-        context = CQEntityContext(cube, level="Face")
+        context = CQEntityMapper(cube, level="Face")
 
         # Get initial count of face entities
         initial_face_count = len(context.entity_registries["Face"])
@@ -119,7 +118,7 @@ class EntityTest(unittest.TestCase):
     def test_cq_entity_context_shape_lookup_consistency(self):
         """Test that shape lookup maintains correct mappings."""
         cube = cq.Workplane("XY").box(10, 10, 10)
-        context = CQEntityContext(cube, level="Face")
+        context = CQEntityMapper(cube, level="Face")
 
         # Verify shape_lookup has entries for registered entities
         total_registered = sum(len(registry)
@@ -131,7 +130,7 @@ class EntityTest(unittest.TestCase):
     def test_cq_entity_context_select_functionality(self):
         """Test CQEntityContext select method returns correct entities."""
         cube = cq.Workplane("XY").box(10, 10, 10)
-        context = CQEntityContext(cube, level="Face")
+        context = CQEntityMapper(cube, level="Face")
 
         faces = cube.faces().vals()
         if len(faces) > 0:
@@ -148,7 +147,7 @@ class EntityTest(unittest.TestCase):
     def test_cq_entity_context_select_many_functionality(self):
         """Test CQEntityContext select_many method returns correct entity sets."""
         cube = cq.Workplane("XY").box(10, 10, 10)
-        context = CQEntityContext(cube, level="Face")
+        context = CQEntityMapper(cube, level="Face")
 
         faces_workplane = cube.faces()
         selected_entities = context.select_many(faces_workplane)
@@ -164,9 +163,9 @@ class EntityTest(unittest.TestCase):
         cube = cq.Workplane("XY").box(10, 10, 10)
 
         # Test with different levels
-        face_level_context = CQEntityContext(cube, level="Face")
-        edge_level_context = CQEntityContext(cube, level="Edge")
-        vertex_level_context = CQEntityContext(cube, level="Vertex")
+        face_level_context = CQEntityMapper(cube, level="Face")
+        edge_level_context = CQEntityMapper(cube, level="Edge")
+        vertex_level_context = CQEntityMapper(cube, level="Vertex")
 
         # Vertex level should have more total entities (goes deeper)
         vertex_total = sum(
@@ -192,27 +191,31 @@ class GmshTransactionTest(unittest.TestCase):
     def test_gmsh_transaction_creation(self):
         """Test basic GmshTransaction creation."""
 
-        class TestTransaction(GmshTransaction):
+        class TestTransaction(Transaction):
+            class_name: str = "TestTransaction"
+            
             def before_gen(self):
                 pass
 
-        transaction = TestTransaction()
-        self.assertIsInstance(transaction, GmshTransaction)
+        transaction = TestTransaction(class_name="TestTransaction")
+        self.assertIsInstance(transaction, Transaction)
 
     def test_multi_entity_transaction_creation(self):
         """Test MultiEntityTransaction creation."""
         entities = OrderedSet([Entity(tag=1, type="Face")])
 
         class TestMultiTransaction(MultiEntityTransaction):
+            class_name: str = "TestMultiTransaction"
+            
             def before_gen(self):
                 pass
 
-        transaction = TestMultiTransaction(entities=entities)
+        transaction = TestMultiTransaction(class_name="TestMultiTransaction", entities=entities)
         self.assertEqual(transaction.entities, entities)
 
     def test_gmsh_transaction_context_creation(self):
         """Test GmshTransactionContext creation."""
-        context = GmshTransactionContext()
+        context = TransactionContext()
         self.assertIsInstance(context.entity_transactions, dict)
         self.assertIsInstance(context.system_transactions, dict)
         self.assertEqual(len(context.entity_transactions), 0)
@@ -220,13 +223,15 @@ class GmshTransactionTest(unittest.TestCase):
 
     def test_gmsh_transaction_context_add_transaction(self):
         """Test adding transactions to context."""
-        context = GmshTransactionContext()
+        context = TransactionContext()
 
-        class TestTransaction(GmshTransaction):
+        class TestTransaction(Transaction):
+            class_name: str = "TestTransaction"
+            
             def before_gen(self):
                 pass
 
-        transaction = TestTransaction()
+        transaction = TestTransaction(class_name="TestTransaction")
         context.add_transaction(transaction)
 
         self.assertEqual(len(context.system_transactions), 1)
@@ -234,13 +239,15 @@ class GmshTransactionTest(unittest.TestCase):
 
     def test_gmsh_transaction_context_add_transactions_list(self):
         """Test adding multiple transactions to context."""
-        context = GmshTransactionContext()
+        context = TransactionContext()
 
-        class TestTransaction(GmshTransaction):
+        class TestTransaction(Transaction):
+            class_name: str = "TestTransaction"
+            
             def before_gen(self):
                 pass
 
-        transactions = [TestTransaction(), TestTransaction()]
+        transactions = [TestTransaction(class_name="TestTransaction"), TestTransaction(class_name="TestTransaction")]
         context.add_transactions(transactions)
 
         # Two transactions of the same type will only keep the last one in system_transactions
@@ -371,23 +378,6 @@ class TransfiniteTest(unittest.TestCase):
         self.assertEqual(len(trans_solid_with_corners.corners), 8)
 
 
-class GmshGeometryQLContextTest(unittest.TestCase):
-    """Test cases for GmshGeometryQLContext."""
-
-    def test_gmsh_context_creation(self):
-        """Test GmshGeometryQLContext creation."""
-        context = GmshGeometryQLContext()
-        # This is initialized in __init__
-        self.assertIsNotNone(context.transaction_ctx)
-        self.assertIsNone(context.tol)  # Should inherit default
-        # entity_ctx is created later when loading geometry
-
-    def test_gmsh_context_creation_with_tolerance(self):
-        """Test GmshGeometryQLContext creation with tolerance."""
-        context = GmshGeometryQLContext(tol=1e-6)
-        self.assertEqual(context.tol, 1e-6)
-
-
 class GmshGeometryQLTest(unittest.TestCase):
     """Test cases for GmshGeometryQL functionality."""
 
@@ -403,11 +393,6 @@ class GmshGeometryQLTest(unittest.TestCase):
 
         with GmshGeometryQL() as geo:
             self.assertIsInstance(geo, GmshGeometryQL)
-
-    def test_gmsh_geometry_ql_creation(self):
-        """Test GmshGeometryQL creation."""
-        geo = GmshGeometryQL()
-        self.assertIsInstance(geo._ctx, GmshGeometryQLContext)
 
     @patch('meshql.gmsh.ql.gmsh')
     def test_add_physical_group_method(self, mock_gmsh):

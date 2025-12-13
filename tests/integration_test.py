@@ -5,7 +5,6 @@ import numpy as np
 import cadquery as cq
 import meshly
 from meshql import GeometryQL, Split
-from meshql.utils.cq_cache import CQCache
 from meshql.utils.shapes import generate_naca4_airfoil
 
 
@@ -14,7 +13,7 @@ class BaseIntegrationTest(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures, clear cache for clean runs."""
-        CQCache.clear_cache()
+        pass
 
     def _validate_mesh_properties(self, mesh, description=""):
         """Common mesh validation helper method - simplified."""
@@ -45,19 +44,19 @@ class CubeExamplesTest(BaseIntegrationTest):
                         .rect(2, 2)
                         .cutThruAll()
                     ),
-                    on_preprocess=lambda ql: (
-                        Split(ql)
+                    preprocess=(Split, lambda split: (
+                        split
                         .from_plane(angle=(90, 90, 0))
                         .from_plane(angle=(-90, 90, 0))
-                    ),
+                    )),
                 )
                 .setTransfiniteAuto(max_nodes=50)
                 .generate(3)
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql.mesh, "Should generate mesh")
-        self._validate_mesh_properties(ql.mesh, "Basic cube with split")
+        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        self._validate_mesh_properties(ql._mesh, "Basic cube with split")
 
     def test_cube_with_boundary_layer(self):
         """Test cube example with boundary layer."""
@@ -71,11 +70,11 @@ class CubeExamplesTest(BaseIntegrationTest):
                         .rect(2, 2)
                         .cutThruAll()
                     ),
-                    on_preprocess=lambda ql: (
-                        Split(ql)
+                    preprocess=(Split, lambda split: (
+                        split
                         .from_plane(angle=(-90, 90, 0))
                         .from_plane(angle=(90, 90, 0))
-                    )
+                    ))
                 )
                 .setTransfiniteAuto(300)
                 .faces(type="interior")
@@ -85,8 +84,8 @@ class CubeExamplesTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql.mesh, "Should generate mesh")
-        self._validate_mesh_properties(ql.mesh, "Cube with boundary layer")
+        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        self._validate_mesh_properties(ql._mesh, "Cube with boundary layer")
 
     def test_meshly_cube_input(self):
         """Test cube example using meshly.Mesh as input."""
@@ -118,8 +117,8 @@ class CubeExamplesTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql.mesh, "Should generate mesh")
-        self._validate_mesh_properties(ql.mesh, "Meshly cube input")
+        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        self._validate_mesh_properties(ql._mesh, "Meshly cube input")
 
 
 class InviscidWedgeExampleTest(BaseIntegrationTest):
@@ -135,21 +134,21 @@ class InviscidWedgeExampleTest(BaseIntegrationTest):
                     .polyline([(0, 1), (1.5, 1), (1.5, 0.2), (0.5, 0), (0, 0)])
                     .close()
                 ),
-                    on_preprocess=lambda ql: (
-                        Split(ql)
+                    preprocess=(Split, lambda split: (
+                        split
                         .from_lines(((0.5, 0), (0.5, 1)))
-                )
+                    ))
                 )
                 .setTransfiniteAuto(500)
-                .edges(indices=[0, 1, 3, 4, 5, 6])
+                .fromTagged([f"edge/{i}" for i in [1, 2, 4, 5, 6, 7]])
                 .addPhysicalGroup(["inlet", "lower", "upper", "lower", "outlet", "upper"])
                 .end()
                 .generate()
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(geo.mesh, "Should generate mesh")
-        self._validate_mesh_properties(geo.mesh, "Inviscid wedge")
+        self.assertIsNotNone(geo._mesh, "Should generate mesh")
+        self._validate_mesh_properties(geo._mesh, "Inviscid wedge")
 
 
 class NACA0012ExampleTest(BaseIntegrationTest):
@@ -185,9 +184,9 @@ class NACA0012ExampleTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(mesh.mesh, "Should generate mesh")
+        self.assertIsNotNone(mesh._mesh, "Should generate mesh")
         self._validate_mesh_properties(
-            mesh.mesh, "NACA0012 2D with boundary layer")
+            mesh._mesh, "NACA0012 2D with boundary layer")
 
     def test_naca0012_3d_wing(self):
         """Test NACA0012 3D wing mesh generation."""
@@ -218,8 +217,8 @@ class NACA0012ExampleTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(geo.mesh, "Should generate mesh")
-        self._validate_mesh_properties(geo.mesh, "NACA0012 3D wing")
+        self.assertIsNotNone(geo._mesh, "Should generate mesh")
+        self._validate_mesh_properties(geo._mesh, "NACA0012 3D wing")
 
 
 class ProgressionExampleTest(BaseIntegrationTest):
@@ -234,10 +233,10 @@ class ProgressionExampleTest(BaseIntegrationTest):
                     cq.Workplane("XY")
                     .polyline([(0, 0), (1, 0), (2, 0.5), (2, 2), (1, 2), (0, 2)])
                     .close(),
-                    on_preprocess=lambda ql: (
-                        Split(ql)
+                    preprocess=(Split, lambda split: (
+                        split
                         .from_lines(((1, 0), (1, 2)))
-                    )
+                    ))
                 )
                 .setTransfiniteAuto(max_nodes=100)
                 .fromTagged([f"edge/{i}" for i in [1, 2, 5, 6, 7, 4]])
@@ -250,9 +249,8 @@ class ProgressionExampleTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql.mesh, "Should generate mesh")
-        self._validate_mesh_properties(ql.mesh, "Structured grid with bump")
-
+        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        self._validate_mesh_properties(ql._mesh, "Structured grid with bump")
 
 
 class MeshPropertiesValidationTest(BaseIntegrationTest):
@@ -268,7 +266,7 @@ class MeshPropertiesValidationTest(BaseIntegrationTest):
                 .generate(3)
             )
 
-        mesh = ql.mesh
+        mesh = ql._mesh
         self.assertIsNotNone(mesh, "Should generate mesh")
 
         # Test basic properties
@@ -312,7 +310,7 @@ class MeshPropertiesValidationTest(BaseIntegrationTest):
                 .load(cq.Workplane("XY").circle(5))
                 .generate(2)
             )
-            examples_data.append(("2D Circle", ql_2d.mesh))
+            examples_data.append(("2D Circle", ql_2d._mesh))
 
         # 3D example
         with GeometryQL.gmsh() as geo:
@@ -321,7 +319,7 @@ class MeshPropertiesValidationTest(BaseIntegrationTest):
                 .load(cq.Workplane("XY").box(2, 2, 2))
                 .generate(3)
             )
-            examples_data.append(("3D Box", ql_3d.mesh))
+            examples_data.append(("3D Box", ql_3d._mesh))
 
         # Validate consistency across examples
         for name, mesh in examples_data:

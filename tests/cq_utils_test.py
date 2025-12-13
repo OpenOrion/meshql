@@ -257,31 +257,31 @@ class CQUtilsTest(unittest.TestCase):
         self.assertIsInstance(result_diagonal, bool)
 
     def test_get_part_checksum_workplane(self):
-        """Test get_part_checksum with Workplane."""
-        checksum = CQUtils.get_part_checksum(self.cube)
+        """Test get_shape_checksum with Workplane."""
+        checksum = CQUtils.get_shape_checksum(self.cube.val())
 
         self.assertIsInstance(checksum, str)
         self.assertEqual(len(checksum), 32)  # MD5 hex digest length
 
         # Same object should produce same checksum
-        checksum2 = CQUtils.get_part_checksum(self.cube)
+        checksum2 = CQUtils.get_shape_checksum(self.cube.val())
         self.assertEqual(checksum, checksum2)
 
         # Different objects should produce different checksums
         other_cube = cq.Workplane("XY").box(15, 15, 15)  # Different size
-        other_checksum = CQUtils.get_part_checksum(other_cube)
+        other_checksum = CQUtils.get_shape_checksum(other_cube.val())
         self.assertNotEqual(checksum, other_checksum)
 
     def test_get_part_checksum_shape(self):
-        """Test get_part_checksum with Shape."""
+        """Test get_shape_checksum with Shape."""
         cube_shape = self.cube.val()
-        checksum = CQUtils.get_part_checksum(cube_shape)
+        checksum = CQUtils.get_shape_checksum(cube_shape)
 
         self.assertIsInstance(checksum, str)
         self.assertEqual(len(checksum), 32)  # MD5 hex digest length
 
         # Shape and workplane of same geometry should have same checksum
-        workplane_checksum = CQUtils.get_part_checksum(self.cube)
+        workplane_checksum = CQUtils.get_shape_checksum(self.cube.val())
         self.assertEqual(checksum, workplane_checksum)
 
     def test_get_part_checksum_precision(self):
@@ -290,8 +290,10 @@ class CQUtilsTest(unittest.TestCase):
         precise_cube = cq.Workplane("XY").box(
             10.1234567, 10.1234567, 10.1234567)
 
-        checksum_low = CQUtils.get_part_checksum(precise_cube, precision=2)
-        checksum_high = CQUtils.get_part_checksum(precise_cube, precision=6)
+        checksum_low = CQUtils.get_shape_checksum(
+            precise_cube.val(), precision=2)
+        checksum_high = CQUtils.get_shape_checksum(
+            precise_cube.val(), precision=6)
 
         self.assertIsInstance(checksum_low, str)
         self.assertIsInstance(checksum_high, str)
@@ -303,19 +305,14 @@ class CQUtilsTest(unittest.TestCase):
 
     def test_checksum_cache(self):
         """Test that checksum cache is functioning."""
-        # Clear cache first
-        CQUtils.checksum_cache.clear()
 
-        # Generate checksum (should cache it)
-        checksum1 = CQUtils.get_part_checksum(self.cube)
-        cache_size_after_first = len(CQUtils.checksum_cache)
+        # Generate checksum (should be consistent)
+        checksum1 = CQUtils.get_shape_checksum(self.cube.val())
 
-        # Generate same checksum again (should use cache)
-        checksum2 = CQUtils.get_part_checksum(self.cube)
-        cache_size_after_second = len(CQUtils.checksum_cache)
+        # Generate same checksum again (should produce same result)
+        checksum2 = CQUtils.get_shape_checksum(self.cube.val())
 
         self.assertEqual(checksum1, checksum2)
-        self.assertEqual(cache_size_after_first, cache_size_after_second)
 
     def test_max_dim_multiplier_attribute(self):
         """Test that max_dim_multiplier attribute exists and can be modified."""

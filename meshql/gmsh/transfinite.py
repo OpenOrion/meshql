@@ -3,14 +3,15 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional, Sequence
 from meshql.gmsh.entity import Entity, ENTITY_DIM_MAPPING
-from meshql.gmsh.transaction import (
+from meshql.core.transaction import (
     SingleEntityTransaction,
     MultiEntityTransaction,
-    GmshTransaction,
+    Transaction,
 )
 from meshql.utils.types import OrderedSet
 
-TransfiniteArrangementType = Literal["Left", "Right", "AlternateLeft", "AlternateRight"]
+TransfiniteArrangementType = Literal["Left",
+                                     "Right", "AlternateLeft", "AlternateRight"]
 TransfiniteMeshType = Literal["Progression", "Bump", "Beta"]
 
 
@@ -25,7 +26,8 @@ def get_num_nodes_for_ratios(total_num_nodes: int, ratios: Sequence[float]):
         allocated_nodes.append(num_nodes)
 
     # remove nodes uniformly from highest ratios
-    descending_ratio_indexes = sorted(range(len(ratios)), key=lambda i: -ratios[i])
+    descending_ratio_indexes = sorted(
+        range(len(ratios)), key=lambda i: -ratios[i])
     num_allocated_nodes = sum(allocated_nodes)
     if num_allocated_nodes > total_num_nodes:
         total_node_diff = num_allocated_nodes - total_num_nodes
@@ -43,8 +45,8 @@ def get_num_nodes_for_ratios(total_num_nodes: int, ratios: Sequence[float]):
     return allocated_nodes
 
 
-
 class SetTransfiniteEdge(SingleEntityTransaction):
+    class_name: Literal["SetTransfiniteEdge"] = "SetTransfiniteEdge"
     entity: Entity
     "edge to be added to the boundary layer"
 
@@ -68,8 +70,8 @@ class SetTransfiniteEdge(SingleEntityTransaction):
         )
 
 
-
 class SetTransfiniteFace(SingleEntityTransaction):
+    class_name: Literal["SetTransfiniteFace"] = "SetTransfiniteFace"
     entity: Entity
     "face to apply field"
 
@@ -81,14 +83,15 @@ class SetTransfiniteFace(SingleEntityTransaction):
 
     def before_gen(self):
         assert self.entity.type == "Face", "SetTransfiniteFace only accepts faces"
-        corner_tags = [corner.tag for corner in self.corners] if self.corners else []
+        corner_tags = [
+            corner.tag for corner in self.corners] if self.corners else []
         gmsh.model.mesh.setTransfiniteSurface(
             self.entity.tag, self.arrangement, corner_tags
         )
 
 
-
 class SetTransfiniteSolid(SingleEntityTransaction):
+    class_name: Literal["SetTransfiniteSolid"] = "SetTransfiniteSolid"
     entity: Entity
     "face to apply field"
 
@@ -97,12 +100,13 @@ class SetTransfiniteSolid(SingleEntityTransaction):
 
     def before_gen(self):
         assert self.entity.type == "Solid", "SetTransfiniteSolid only accepts solids"
-        corner_tags = [corner.tag for corner in self.corners] if self.corners else []
+        corner_tags = [
+            corner.tag for corner in self.corners] if self.corners else []
         gmsh.model.mesh.setTransfiniteVolume(self.entity.tag, corner_tags)
 
 
-
 class SetCompound(MultiEntityTransaction):
+    class_name: Literal["SetCompound"] = "SetCompound"
     entities: OrderedSet[Entity]
     "face to apply field"
 
@@ -111,8 +115,8 @@ class SetCompound(MultiEntityTransaction):
         gmsh.model.mesh.setCompound(ENTITY_DIM_MAPPING["Edge"], entity_tags)
 
 
-
-class SetTransfiniteAuto(GmshTransaction):
+class SetTransfiniteAuto(Transaction):
+    class_name: Literal["SetTransfiniteAuto"] = "SetTransfiniteAuto"
 
     def before_gen(self):
         gmsh.option.setNumber("Mesh.MeshSizeMin", 0.5)

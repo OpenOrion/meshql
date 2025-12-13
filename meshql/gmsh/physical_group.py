@@ -1,12 +1,14 @@
 import gmsh
 from dataclasses import dataclass
+from typing import Literal
 from meshql.gmsh.entity import Entity
-from meshql.gmsh.transaction import MultiEntityTransaction
+from meshql.core.transaction import MultiEntityTransaction
 from meshql.utils.types import OrderedSet
 from pydantic import computed_field
 
 
 class SetPhysicalGroup(MultiEntityTransaction):
+    class_name: Literal["SetPhysicalGroup"] = "SetPhysicalGroup"
     entities: OrderedSet[Entity]
     "The entities that will be added to the physical group."
 
@@ -21,7 +23,6 @@ class SetPhysicalGroup(MultiEntityTransaction):
         super().__init__(**data)
         # assert len(self.entities) > 0, "At least one entity must be provided"
         self.ref_id = self.name
-
 
     def before_gen(self):
         entity_tags = []

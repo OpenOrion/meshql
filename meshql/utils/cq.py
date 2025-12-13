@@ -1,60 +1,23 @@
 import hashlib
 import cadquery as cq
 from cadquery.cq import CQObject
-from cadquery.occ_impl.shape_protocols import Shapes as CQShapes
-from cadquery.occ_impl.shapes import inverse_shape_LUT
 
-from typing import Iterable, Literal, Optional, Sequence, Union, cast
+from typing import Iterable, Literal, Optional, Sequence, Union
 import numpy as np
-from meshql.utils.types import Axis, OrderedSet, to_vec
+from meshql.utils.types import Axis, OrderedSet, PathLike, to_vec, CQType, RegionGroupType, CQEdgeOrFace
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
-from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Solid, TopoDS_Shell, TopoDS_Face, TopoDS_Wire, TopoDS_Edge, TopoDS_Vertex, TopoDS_Shape
+from OCP.TopoDS import TopoDS, TopoDS_Vertex, TopoDS_Solid
 from OCP.BRep import BRep_Tool
-from OCP.TopTools import (
-    TopTools_IndexedMapOfShape,
-)
-from OCP.TopExp import TopExp  # Topology explorer
 
 import numpy as np
 import cadquery as cq
 
-CQType = CQShapes
-GroupType = Literal["split", "interior", "exterior"]
-CQEdgeOrFace = Union[cq.Edge, cq.Face]
-
-CQ_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
-    cq.Compound: "Compound",
-    cq.Solid: "Solid",
-    cq.Shell: "Shell",
-    cq.Face: "Face",
-    cq.Wire: "Wire",
-    cq.Edge: "Edge",
-    cq.Vertex: "Vertex",
-}
-
-OCC_TYPE_STR_MAPPING: dict[type[CQObject], CQType] = {
-    TopoDS_Compound: "Compound",
-    TopoDS_Solid: "Solid",  
-    TopoDS_Shell: "Shell",
-    TopoDS_Face: "Face",
-    TopoDS_Wire: "Wire",
-    TopoDS_Edge: "Edge",
-    TopoDS_Vertex: "Vertex",
-}
-
-CQ_TYPE_CLASS_MAPPING = dict(
-    zip(CQ_TYPE_STR_MAPPING.values(), CQ_TYPE_STR_MAPPING.keys())
-)
-
-CQ_TYPE_RANKING = dict(
-    zip(CQ_TYPE_STR_MAPPING.keys(), range(len(CQ_TYPE_STR_MAPPING) + 1)[::-1])
-)
 ShapeChecksum = str
 
 
 class CQUtils:
-    checksum_cache: dict[ShapeChecksum, str] = {}
     max_dim_multiplier = 10
+
     @staticmethod
     def is_interior_face(face: CQObject):
         assert isinstance(face, cq.Face), "object must be a face"
@@ -91,7 +54,7 @@ class CQUtils:
         face: cq.Face,
         maxDim: float,
         tol: Optional[float] = None,
-    ) -> GroupType:
+    ) -> RegionGroupType:
         is_split = False
         total_solid = workplane.val()
         is_planar = face.geomType() == "PLANE"
@@ -131,7 +94,8 @@ class CQUtils:
                 intersect_line, tol=tol
             ).Vertices()
             is_interior = len(intersect_vertices) != 0
-            is_split = is_interior and intersect_vertices[0].distance(face) < 1e-8
+            is_split = is_interior and intersect_vertices[0].distance(
+                face) < 1e-8
 
         if is_split:
             group_type = "split"
@@ -168,13 +132,15 @@ class CQUtils:
         assert fused_shape is not None, "No shapes to fuse"
         return fused_shape
 
+    # TODO: in the future make this more robust
     @staticmethod
     def get_dimension(workplane: cq.Workplane):
         return 2 if len(workplane.solids().vals()) == 0 else 3
 
     @staticmethod
-    def import_workplane(target: Union[cq.Workplane, str, Iterable[CQObject]]):
-        if isinstance(target, str):
+    def import_workplane(target: Union[cq.Workplane, PathLike, Iterable[CQObject]]):
+        if isinstance(target, PathLike):
+            target = str(target)
             if target.lower().endswith(".step"):
                 workplane = cq.importers.importStep(target)
             elif target.lower().endswith(".dxf"):
@@ -214,32 +180,48 @@ class CQUtils:
         return (geom_point.X(), geom_point.Y(), geom_point.Z())
 
     @staticmethod
-    def get_part_checksum(shape: Union[cq.Shape, cq.Workplane], precision=3):
-        shape = shape if isinstance(shape, cq.Shape) else shape.val()
-        if shape in CQUtils.checksum_cache:
-            return CQUtils.checksum_cache[shape]
+    def get_shape_vertices(shape: cq.Shape):
+        """Extract vertices from a shape as a numpy array."""
         vertices = np.array(
             [
                 CQUtils.vertex_to_Tuple(TopoDS.Vertex_s(v))
                 for v in shape._entities("Vertex")
             ]
         )
+        return vertices
+
+    @staticmethod
+    def get_normalized_vertices(shape: Union[cq.Shape, np.ndarray], sorted: bool = True, precision=3):
+        """Get normalized vertices from a shape or array."""
+        vertices = (
+            CQUtils.get_shape_vertices(shape)
+            if isinstance(shape, cq.Shape)
+            else shape
+        )
 
         rounded_vertices = np.round(vertices, precision)
         rounded_vertices[rounded_vertices == -0] = 0
 
+        if not sorted:
+            return rounded_vertices
         sorted_indices = np.lexsort(rounded_vertices.T)
-        sorted_vertices = rounded_vertices[sorted_indices]
+        return rounded_vertices[sorted_indices]
 
-        vertices_hash = hashlib.md5(sorted_vertices.tobytes()).digest()
-        checksum = hashlib.md5(vertices_hash).hexdigest()
-        CQUtils.checksum_cache[shape] = checksum
-        return checksum
+    @staticmethod
+    def get_shape_checksum(
+        shape: Union[cq.Shape, TopoDS_Solid, np.ndarray], precision=5
+    ):
+        """Generate checksum from shape vertices."""
+        if isinstance(shape, np.ndarray):
+            normalized_vertices = shape
+        else:
+            shape = shape if isinstance(shape, cq.Shape) else cq.Shape(shape)
+            normalized_vertices = CQUtils.get_normalized_vertices(
+                shape, precision=precision)
 
+        return hashlib.md5(normalized_vertices.tobytes()).hexdigest()
 
     @staticmethod
     def compare_vectors(vec1: cq.Vector, vec2: cq.Vector, atol=1e-5):
         is_close = np.isclose(vec1.toTuple(), vec2.toTuple(), atol=atol)
         return is_close.all()
-    
-  

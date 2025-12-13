@@ -1,10 +1,9 @@
 from dataclasses import dataclass
-from functools import cached_property
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Iterable, Literal, Optional, Sequence, Union, cast
-from meshql.utils.cq import CQ_TYPE_STR_MAPPING, CQType, CQUtils, GroupType
-from meshql.utils.types import OrderedSet
+from meshql.utils.cq import CQUtils
+from meshql.utils.types import OrderedSet, CQType, RegionGroupType, CQ_TYPE_STR_MAPPING
 import cadquery as cq
 from cadquery.occ_impl.shape_protocols import Shapes as CQShapes
 from cadquery.occ_impl.shapes import inverse_shape_LUT
@@ -13,7 +12,6 @@ from OCP.TopTools import (
     TopTools_IndexedMapOfShape,
 )
 from OCP.TopExp import TopExp  # Topology explorer
-
 
 SetOperation = Literal["union", "intersection", "difference"]
 
@@ -102,7 +100,8 @@ class CQLinq:
         parent_type: CQType,
         child_type: CQType,
     ):
-        cq_objs = list(target.vals() if isinstance(target, cq.Workplane) else target)
+        cq_objs = list(target.vals() if isinstance(
+            target, cq.Workplane) else target)
         if CQ_TYPE_STR_MAPPING[type(cq_objs[0])] == child_type:
             yield cq_objs
         else:
@@ -155,7 +154,7 @@ class CQLinq:
         while cq_edges:
             for i, cq_edge in enumerate(cq_edges):
                 edge_vertices = cq_edge.Vertices()
-                if  edge_vertices[0].hashCode() == sorted_paths[-1].end_vertex.hashCode():
+                if edge_vertices[0].hashCode() == sorted_paths[-1].end_vertex.hashCode():
                     sorted_paths.append(DirectedPath(cq_edge))
                     cq_edges.pop(i)
                     break
@@ -176,34 +175,23 @@ class CQLinq:
         return sorted_paths
 
     # TODO: clean up this function
+
     @staticmethod
     def groupByRegionTypes(
         target: Union[cq.Workplane, Sequence[CQObject]],
         is_2d: bool,
         tol: Optional[float] = None,
         check_splits: bool = True,
-        only_faces=False,
+        current_region_groups: Optional[dict[str, RegionGroupType]] = None,
     ):
+        if current_region_groups is None:
+            current_region_groups = {}
+
         workplane = (
-            target if isinstance(target, cq.Workplane) else cq.Workplane().add(target)
+            target if isinstance(
+                target, cq.Workplane) else cq.Workplane().add(target)
         )
         max_dim = workplane.val().BoundingBox().DiagonalLength * 10
-        add_wire_to_group = lambda wires, group: group.update(
-            [
-                *wires,
-                *CQLinq.select(wires, "Edge"),
-                *CQLinq.select(wires, "Vertex"),
-            ]
-        )
-
-        groups: dict[GroupType, OrderedSet[CQObject]] = {
-            "split": OrderedSet[CQObject](),
-            "interior": OrderedSet[CQObject](),
-            "exterior": OrderedSet[CQObject](),
-        }
-
-        # is_2d = CQUtils.get_dimension(workplane) == 2
-        # workplane = workplane.extrude(-1) if is_2d else workplane
 
         inner_edges = OrderedSet[tuple]()
         if not check_splits:
@@ -216,35 +204,59 @@ class CQLinq:
 
         for solid in workplane.solids().vals():
             for face in solid.Faces():
-                face_group = None
-                if face_group is None:
-                    if check_splits:
-                        group_type = CQUtils.get_group_type(
-                            workplane, face, max_dim, tol
-                        )
-                    else:
-                        group_type = "exterior"
-                        for edge in face.outerWire().Edges():
-                            if edge.Center().toTuple() in inner_edges:
-                                group_type = "interior"
-                                break
-                    face_group = groups[group_type]
+                face_checksum = CQUtils.get_shape_checksum(face)
+                if face_checksum in current_region_groups:
+                    continue
 
-                face_group.add(face)
-                if not only_faces:
+                group_type = None
+                if check_splits:
+                    group_type = CQUtils.get_group_type(
+                        workplane, face, max_dim, tol
+                    )
+                else:
+                    group_type = "exterior"
+                    for edge in face.outerWire().Edges():
+                        if edge.Center().toTuple() in inner_edges:
+                            group_type = "interior"
+                            break
+
+                current_region_groups[face_checksum] = group_type
+
+        groups: dict[RegionGroupType, OrderedSet[CQObject]] = {
+            "split": OrderedSet[CQObject](),
+            "interior": OrderedSet[CQObject](),
+            "exterior": OrderedSet[CQObject](),
+        }
+
+        def add_wire_to_group(wires, group):
+            group.update(
+                [
+                    *wires,
+                    *CQLinq.select(wires, "Edge"),
+                    *CQLinq.select(wires, "Vertex"),
+                ]
+            )
+
+        for solid in workplane.solids().vals():
+            for face in solid.Faces():
+                face_checksum = CQUtils.get_shape_checksum(face)
+                group_type = current_region_groups.get(face_checksum)
+
+                if group_type:
+                    face_group = groups[group_type]
+                    face_group.add(face)
                     add_wire_to_group(face.Wires(), face_group)
 
         if is_2d:
-            # exterior_group_tmp = groups["exterior"].difference(groups["interior"])
-            # groups["interior"] = groups["interior"].difference(groups["exterior"])
-            groups["exterior"] = groups["exterior"].difference(groups["interior"])
+            groups["exterior"] = groups["exterior"].difference(
+                groups["interior"])
 
         return groups
 
     @staticmethod
     def groupBySet(
         target: Union[cq.Workplane, Iterable[CQObject], CQObject],
-        group_type: GroupType,
+        group_type: RegionGroupType,
         group_types: dict[str, cq.Workplane],
         set_operation: SetOperation,
     ):

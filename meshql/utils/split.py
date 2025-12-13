@@ -4,7 +4,6 @@ import numpy as np
 import cadquery as cq
 from typing import Literal, Sequence, Union, cast
 from meshql.utils.cq import CQUtils
-from meshql.utils.cq_cache import CQCache
 from meshql.utils.cq_linq import CQLinq
 from meshql.utils.types import (
     Axis,
@@ -17,24 +16,13 @@ SplitAt = Literal["end", "per"]
 SnapType = Union[bool, Literal["closest"], float]
 MultiFaceAxis = Union[Axis, Literal["avg", "face1", "face2"]]
 
+
 class SplitUtils:
     @staticmethod
     def split_workplane(workplane: cq.Workplane, splits: Sequence[cq.Face]):
-        # shape_combo = [*workplane.vals(), *splits]
-        # cache_exists = CQCache.get_cache_exists(shape_combo)
-        # cache_file_name = CQCache.get_file_name(shape_combo)
-        # if cache_exists:
-        #     print("Split cache exists, loading ...")
-        #     shape = CQCache.import_brep(cache_file_name)
-        # else:
-        #     for split in splits:      
-        #         workplane = workplane.split(split)
-        #     shape = CQUtils.fuse_shapes(workplane.vals())
-        #     CQCache.export_brep(shape, cache_file_name)
-        for split in splits:      
+        for split in splits:
             workplane = workplane.split(split)
         shape = CQUtils.fuse_shapes(workplane.vals())
-
 
         return cq.Workplane(shape)
 
@@ -65,7 +53,8 @@ class SplitUtils:
         angle: VectorSequence = (0, 0, 1),
         sizing: Literal["maxDim", "infinite"] = "maxDim",
     ):
-        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * CQUtils.max_dim_multiplier
+        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * \
+            CQUtils.max_dim_multiplier
         base_pnt_vec = to_vec(base_pnt)
         angle_vec = to_vec(np.radians(list(angle)))
         if sizing == "maxDim":
@@ -82,13 +71,16 @@ class SplitUtils:
         snap: SnapType = False,
         snap_edges=OrderedSet[cq.Edge](),
     ):
-        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * CQUtils.max_dim_multiplier
+        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * \
+            CQUtils.max_dim_multiplier
         normal_vector = CQUtils.normalize(to_vec(axis))
         towards_edge = edge.translate(normal_vector * maxDim)
         away_edge = edge.translate(-normal_vector * maxDim)
         if dir == "both":
-            towards_split_face = SplitUtils.make_split_face_from_edges(edge, towards_edge)
-            away_split_face = SplitUtils.make_split_face_from_edges(edge, away_edge)
+            towards_split_face = SplitUtils.make_split_face_from_edges(
+                edge, towards_edge)
+            away_split_face = SplitUtils.make_split_face_from_edges(
+                edge, away_edge)
             split_face = towards_split_face.fuse(away_split_face)
         elif dir in ("towards", "away"):
             split_face = SplitUtils.make_split_face_from_edges(
@@ -97,9 +89,11 @@ class SplitUtils:
 
         if snap != False:
             snap_tolerance = snap if isinstance(snap, float) else None
-            intersected_edges = workplane.intersect(cq.Workplane(split_face)).edges().vals()
+            intersected_edges = workplane.intersect(
+                cq.Workplane(split_face)).edges().vals()
             if len(intersected_edges) > 0:
-                closest_intersection_edge = CQLinq.find_nearest(intersected_edges, edge)
+                closest_intersection_edge = CQLinq.find_nearest(
+                    intersected_edges, edge)
                 assert closest_intersection_edge, "No close intersecting edge found"
                 snap_edge = cast(
                     cq.Edge,

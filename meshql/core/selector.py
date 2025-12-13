@@ -1,13 +1,19 @@
+from OCP.TopAbs import (
+    TopAbs_COMPOUND,
+    TopAbs_SOLID,
+    TopAbs_SHELL,
+    TopAbs_FACE,
+    TopAbs_WIRE,
+    TopAbs_EDGE,
+    TopAbs_VERTEX,
+    TopAbs_SHAPE,
+)
 from dataclasses import dataclass
 import cadquery as cq
 from cadquery.cq import CQObject
 from typing import Callable, Optional, Sequence, Union
-from meshql.utils.cq import (
-    GroupType,
-    CQType,
-)
-from meshql.utils.cq_linq import SetOperation
-from meshql.utils.types import OrderedSet
+from meshql.utils.types import OrderedSet, RegionGroupType, CQType
+from meshql.utils.cq_linq import CQLinq, SetOperation
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopAbs import TopAbs_SHAPE
 
@@ -47,22 +53,82 @@ class GroupSelector(cq.Selector):
 class Selection:
     selector: Union[cq.Selector, str, None] = None
     tag: Union[str, Sequence[str], None] = None
-    type: Optional[GroupType] = None
+    type: Optional[RegionGroupType] = None
     indices: Optional[Sequence[int]] = None
     filter: Optional[Callable[[CQObject], bool]] = None
     region_set_operation: Optional[SetOperation] = None
 
+    def select_entities(
+        self,
+        workplane: cq.Workplane,
+        cq_type: "CQType",
+        region_groups: Optional[dict[RegionGroupType,
+                                     "OrderedSet[CQObject]"]] = None,
+        region_set_operation: Optional["SetOperation"] = None,
+    ) -> cq.Workplane:
+        """
+        Select entities from a workplane based on selection criteria.
+        This is extracted from GeometryQL.select to allow entity selection
+        without requiring the full GeometryQL context.
 
-from OCP.TopAbs import (
-    TopAbs_COMPOUND,
-    TopAbs_SOLID,
-    TopAbs_SHELL,
-    TopAbs_FACE,
-    TopAbs_WIRE,
-    TopAbs_EDGE,
-    TopAbs_VERTEX,
-    TopAbs_SHAPE,
-)
+        Args:
+            workplane: The CadQuery workplane to select from
+            selection: Selection criteria (selector, type, filters, etc.)
+            cq_type: Type of CadQuery objects to select
+            region_groups: Optional region groups for type-based filtering
+
+        Returns:
+            New workplane with selected entities
+        """
+        if self.tag:
+            # Handle tagged selection
+            cq_obj = workplane._getTagged(self.tag)
+            filtered_objs = CQLinq.select(cq_obj, cq_type)
+        else:
+            filtered_objs = CQLinq.select(workplane, cq_type)
+
+        # Apply selector-based filtering
+        if isinstance(self.selector, str):
+            filtered_objs = cq.StringSyntaxSelector(self.selector).filter(
+                filtered_objs
+            )
+        elif isinstance(self.selector, cq.Selector):
+            filtered_objs = self.selector.filter(filtered_objs)
+
+        # Apply type-based filtering
+        if self.type and region_groups:
+            filtered_objs = GroupSelector(region_groups[self.type]).filter(
+                filtered_objs
+            )
+
+        # Apply region set operations
+        effective_region_set_operation = region_set_operation or self.region_set_operation
+        if effective_region_set_operation and region_groups:
+            if self.type:
+                region_type = self.type
+            else:
+                raise ValueError(
+                    "Group type must be specified for region set operation")
+
+            filtered_objs = CQLinq.groupBySet(
+                filtered_objs,
+                region_type,
+                region_groups,
+                effective_region_set_operation,
+            )
+
+        # Apply index-based filtering
+        if self.indices is not None:
+            filtered_objs = IndexSelector(
+                self.indices).filter(filtered_objs)
+
+        # Apply custom filter function
+        if self.filter is not None:
+            filtered_objs = FilterSelector(
+                self.filter).filter(filtered_objs)
+
+        return workplane.newObject(filtered_objs)
+
 
 ENUM_MAPPING = {
     "Compound": TopAbs_COMPOUND,

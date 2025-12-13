@@ -1,17 +1,17 @@
 import gmsh
-from typing import Callable, Union
+from typing import Callable, Literal, Union
 from dataclasses import dataclass
 from meshql.gmsh.entity import Entity
-from meshql.gmsh.transaction import (
-    GmshTransaction,
+from meshql.core.transaction import (
+    Transaction,
     SingleEntityTransaction,
     MultiEntityTransaction,
 )
 from meshql.utils.types import OrderedSet
 
 
-
 class Recombine(SingleEntityTransaction):
+    class_name: Literal["Recombine"] = "Recombine"
     entity: Entity
     "Entity to recombine for"
 
@@ -19,11 +19,12 @@ class Recombine(SingleEntityTransaction):
     "Angle to recombine with"
 
     def before_gen(self):
-        gmsh.model.mesh.setRecombine(self.entity.dim, self.entity.tag, self.angle)
-
+        gmsh.model.mesh.setRecombine(
+            self.entity.dim, self.entity.tag, self.angle)
 
 
 class SetSmoothing(SingleEntityTransaction):
+    class_name: Literal["SetSmoothing"] = "SetSmoothing"
     entity: Entity
     "Entity to smooth for"
 
@@ -31,11 +32,12 @@ class SetSmoothing(SingleEntityTransaction):
     "Number of times to smooth the mesh"
 
     def after_gen(self):
-        gmsh.model.mesh.setSmoothing(self.entity.dim, self.entity.tag, self.num_smooths)
+        gmsh.model.mesh.setSmoothing(
+            self.entity.dim, self.entity.tag, self.num_smooths)
 
 
-
-class Refine(GmshTransaction):
+class Refine(Transaction):
+    class_name: Literal["Refine"] = "Refine"
     num_refines: int = 1
     "Number of times to refine the mesh"
 
@@ -44,8 +46,8 @@ class Refine(GmshTransaction):
             gmsh.model.mesh.refine()
 
 
-
 class SetMeshSize(MultiEntityTransaction):
+    class_name: Literal["SetMeshSize"] = "SetMeshSize"
     entities: OrderedSet[Entity]
     "Entities to set mesh sizes for"
 
@@ -57,4 +59,6 @@ class SetMeshSize(MultiEntityTransaction):
         if isinstance(self.size, float):
             gmsh.model.mesh.setSize(point_tags, self.size)
         else:
-            gmsh.model.mesh.setSizeCallback(lambda dim, tag, x, y, z, lc: lc if tag in point_tags else self.size(x, y, z))  # type: ignore
+            gmsh.model.mesh.setSizeCallback(
+                # type: ignore
+                lambda dim, tag, x, y, z, lc: lc if tag in point_tags else self.size(x, y, z))

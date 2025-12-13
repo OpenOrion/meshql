@@ -1,9 +1,7 @@
 import gmsh
-from enum import Enum
-from dataclasses import dataclass
 from typing import Literal, Optional
 from meshql.gmsh.entity import Entity
-from meshql.gmsh.transaction import GmshTransaction
+from meshql.core.transaction import Transaction
 
 
 MESH_ALGORITHM_2D_MAPPING = {
@@ -58,8 +56,8 @@ MeshSubdivisionType = Literal[
 ]
 
 
-
-class SetMeshAlgorithm2D(GmshTransaction):
+class SetMeshAlgorithm2D(Transaction):
+    class_name: Literal["SetMeshAlgorithm2D"] = "SetMeshAlgorithm2D"
     type: MeshAlgorithm2DType
     "algorithm to use"
 
@@ -77,8 +75,8 @@ class SetMeshAlgorithm2D(GmshTransaction):
             gmsh.option.setNumber("Mesh.Algorithm", algo_val)
 
 
-
-class SetMeshAlgorithm3D(GmshTransaction):
+class SetMeshAlgorithm3D(Transaction):
+    class_name: Literal["SetMeshAlgorithm3D"] = "SetMeshAlgorithm3D"
     type: MeshAlgorithm3DType
     "algorithm to use"
 
@@ -87,8 +85,8 @@ class SetMeshAlgorithm3D(GmshTransaction):
         gmsh.option.setNumber("Mesh.Algorithm3D", algo_val)
 
 
-
-class SetSubdivisionAlgorithm(GmshTransaction):
+class SetSubdivisionAlgorithm(Transaction):
+    class_name: Literal["SetSubdivisionAlgorithm"] = "SetSubdivisionAlgorithm"
     type: MeshSubdivisionType
     "algorithm to use"
 

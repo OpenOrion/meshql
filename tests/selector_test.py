@@ -1,8 +1,8 @@
-"""Unit tests for meshql.selector module."""
+"""Unit tests for meshql.core.selector module."""
 
 import unittest
 import cadquery as cq
-from meshql.selector import IndexSelector, FilterSelector, GroupSelector, Selection, ShapeExplorer, ConnectedShapesExplorer
+from meshql.core.selector import IndexSelector, FilterSelector, GroupSelector, Selection, ShapeExplorer, ConnectedShapesExplorer
 from meshql.utils.types import OrderedSet
 
 

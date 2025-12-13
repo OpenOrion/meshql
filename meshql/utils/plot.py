@@ -46,9 +46,9 @@ def plot_cq(
     samples_per_spline: int = 50,
     ctx=None,
 ):
-    from meshql.gmsh.entity import CQEntityContext
+    from meshql.gmsh.entity import CQEntityMapper
 
-    ctx = cast(CQEntityContext, ctx)
+    ctx = cast(CQEntityMapper, ctx)
 
     fig = go.Figure(layout=go.Layout(title=go.layout.Title(text=title)))
     if isinstance(target, cq.Workplane):
@@ -66,7 +66,8 @@ def plot_cq(
 
         edge_name = f"Edge{ctx.select(edges[0]).tag}" if ctx else f"Edge{i}"
         sampling = get_sampling(0, 1, samples_per_spline, False)
-        coords = np.concatenate([np.array([vec.toTuple() for vec in edge.positions(sampling)], dtype=NumpyFloat) for edge in edges])  # type: ignore
+        coords = np.concatenate([np.array([vec.toTuple() for vec in edge.positions(
+            sampling)], dtype=NumpyFloat) for edge in edges])  # type: ignore
         add_plot(coords, fig, edge_name)
 
     fig.layout.yaxis.scaleanchor = "x"  # type: ignore

@@ -22,6 +22,7 @@ def load_from_gmsh() -> meshly.Mesh:
     vertices = np.array(points_concatted, dtype=NumpyFloat).reshape(
         (-1, 3))[node_indices]
 
+    # Get all mesh elements (including those in markers)
     grouped_concatted_elements = gmsh.model.mesh.getElements()
     for element_type_value, grouped_element_tags, grouped_node_tags_concatted in zip(
         *grouped_concatted_elements
@@ -54,7 +55,7 @@ def load_from_gmsh() -> meshly.Mesh:
     cell_types = np.array(all_cell_types, dtype=np.uint8)
     index_sizes = np.array(all_index_sizes, dtype=np.uint32)
 
-    # get physical groups
+    # get physical groups (markers)
     markers: dict[str, np.ndarray] = {}
     marker_cell_types: dict[str, np.ndarray] = {}
     physical_groups = gmsh.model.getPhysicalGroups()
@@ -117,54 +118,215 @@ def load_to_gmsh(mesh: meshly.Mesh, surface_tag: int = 1) -> None:
 
     Args:
         mesh: A meshly Mesh object to import
-        surface_tag: The tag to use for the discrete surface entity (default: 1)
+        surface_tag: The tag to use for the discrete entity (default: 1)
     """
 
     if not isinstance(mesh, meshly.Mesh):
         raise TypeError("mesh must be a meshly.Mesh object")
 
-    # Create a discrete surface entity to hold the mesh
-    gmsh.model.addDiscreteEntity(2, surface_tag)  # 2 = dimension for surface
+
+    # Create a discrete entity to hold the mesh (surface for 2D, volume for 3D)
+    gmsh.model.addDiscreteEntity(mesh.dim, surface_tag)
 
     # Add nodes directly to the mesh
     node_tags = list(range(1, len(mesh.vertices) + 1))  # 1-based indexing
     gmsh.model.mesh.addNodes(
-        dim=2,  # dimension
+        dim=mesh.dim,
         tag=surface_tag,  # entity tag (must match the discrete entity)
         nodeTags=node_tags,
         # flattened array [x1,y1,z1,x2,y2,z2,...]
         coord=mesh.vertices.flatten()
     )
 
-    # Mixed polygon mesh - handle each polygon type separately
+    # Get polygon indices once
     polygon_indices = mesh.get_polygon_indices()
 
-    # Process each unique cell type and add elements directly to gmsh (merged for efficiency)
+    # Build a mask to identify which elements are markers (to exclude from main surface)
+    marker_element_mask = _build_marker_mask(mesh, polygon_indices)
+
+    # Add main elements (excluding marker elements)
+    next_element_tag = _add_main_surface_elements(
+        mesh, polygon_indices, marker_element_mask, surface_tag,
+    )
+
+    # Add marker elements as separate physical groups
+    if mesh.markers:
+        _add_marker_elements(mesh, next_element_tag)
+
+
+def _build_marker_mask(mesh: meshly.Mesh, polygon_indices: np.ndarray) -> np.ndarray:
+    """Build a boolean mask identifying which elements belong to markers.
+
+    Args:
+        mesh: The mesh containing markers
+        polygon_indices: Array of polygon indices from the mesh
+
+    Returns:
+        Boolean array where True indicates the element is a marker
+    """
+    marker_element_mask = np.zeros(len(mesh.cell_types), dtype=bool)
+
+    if not mesh.markers:
+        return marker_element_mask
+
+    # Build a set of marker polygon hashes for fast lookup
+    marker_hashes = set()
+
+    for marker_name in mesh.markers.keys():
+        if marker_name not in mesh.marker_cell_types:
+            continue
+
+        marker_types = mesh.marker_cell_types[marker_name]
+        marker_nodes = mesh.markers[marker_name]
+
+        # Reconstruct marker polygons and add their hashes
+        node_offset = 0
+        for marker_type in marker_types:
+            gmsh_type = VTK_TO_GMSH_ELEMENT_TYPE.get(marker_type)
+            if gmsh_type:
+                props = gmsh.model.mesh.getElementProperties(gmsh_type)
+                num_nodes = props[3]
+                marker_poly = marker_nodes[node_offset:node_offset + num_nodes]
+                # Create a hashable tuple from sorted polygon indices
+                marker_hashes.add(tuple(sorted(marker_poly)))
+                node_offset += num_nodes
+
+    # Mark elements using hash lookup (O(n) instead of O(n*m))
+    for i, poly in enumerate(polygon_indices):
+        if tuple(sorted(poly)) in marker_hashes:
+            marker_element_mask[i] = True
+
+    return marker_element_mask
+
+
+def _add_main_surface_elements(
+    mesh: meshly.Mesh,
+    polygon_indices: np.ndarray,
+    marker_element_mask: np.ndarray,
+    surface_tag: int,
+) -> int:
+    """Add main elements to GMSH, excluding marker elements.
+
+    Args:
+        mesh: The mesh to import
+        polygon_indices: Array of polygon indices
+        marker_element_mask: Boolean mask indicating marker elements
+        surface_tag: The entity tag
+
+    Returns:
+        Next available element tag
+    """
     unique_cell_types = np.unique(mesh.cell_types)
+    next_element_tag = 1
 
     for cell_type in unique_cell_types:
         gmsh_type = VTK_TO_GMSH_ELEMENT_TYPE.get(cell_type)
-        if gmsh_type:
-            # Create mask for this cell type
-            mask = mesh.cell_types == cell_type
-            # Use direct numpy boolean indexing - much cleaner and faster
-            cell_type_polygons = polygon_indices[mask]
-            # Convert to 1-based indexing using vectorized addition
-            elements = cell_type_polygons + 1
+        if not gmsh_type:
+            unsupported_count = np.sum(mesh.cell_types == cell_type)
+            raise ValueError(
+                f"Unsupported VTK cell type {cell_type} found in {unsupported_count} elements. "
+                f"Cannot import mesh with unsupported cell types.")
 
-            # Add elements directly to gmsh using vectorized operations
-            element_tags = np.arange(1, len(elements) + 1)
-            element_node_tags = elements.flatten()
+        # Create mask for this cell type, excluding marker elements
+        mask = (mesh.cell_types == cell_type) & (~marker_element_mask)
+        cell_type_polygons = polygon_indices[mask]
+
+        if len(cell_type_polygons) == 0:
+            continue
+
+        # Convert to 1-based indexing
+        elements = cell_type_polygons + 1
+        num_elements = len(elements)
+
+        element_tags = np.arange(
+            next_element_tag, next_element_tag + num_elements)
+        next_element_tag += num_elements
+
+        gmsh.model.mesh.addElements(
+            dim=mesh.dim,
+            tag=surface_tag,
+            elementTypes=[gmsh_type],
+            elementTags=[element_tags],
+            nodeTags=[elements.flatten()]
+        )
+
+    return next_element_tag
+
+
+def _add_marker_elements(mesh: meshly.Mesh, next_element_tag: int) -> None:
+    """Add marker elements as separate physical groups in GMSH.
+
+    Args:
+        mesh: The mesh containing markers
+        next_element_tag: Starting element tag for marker elements
+    """
+    for marker_name, marker_nodes in mesh.markers.items():
+        if marker_name not in mesh.marker_cell_types:
+            continue
+
+        marker_types = mesh.marker_cell_types[marker_name]
+        if len(marker_types) == 0:
+            continue
+
+        # Determine dimension from the first type
+        first_vtk_type = marker_types[0]
+        first_gmsh_type = VTK_TO_GMSH_ELEMENT_TYPE.get(first_vtk_type)
+        if not first_gmsh_type:
+            raise ValueError(
+                f"Unsupported VTK cell type {first_vtk_type} in marker '{marker_name}'. "
+                f"Cannot import marker with unsupported cell type.")
+
+        try:
+            props = gmsh.model.mesh.getElementProperties(first_gmsh_type)
+            marker_dim = props[1]
+        except Exception as e:
+            raise ValueError(
+                f"Could not determine dimension for marker '{marker_name}': {e}") from e
+
+        # Create a discrete entity for this marker
+        entity_tag = gmsh.model.addDiscreteEntity(marker_dim)
+
+        # Find changes in cell types to process chunks
+        change_indices = np.concatenate((
+            np.where(marker_types[:-1] != marker_types[1:])[0] + 1,
+            [len(marker_types)]
+        ))
+
+        node_offset = 0
+        for start_idx, end_idx in zip([0] + change_indices[:-1].tolist(), change_indices):
+            vtk_type = marker_types[start_idx]
+            count = end_idx - start_idx
+
+            gmsh_type = VTK_TO_GMSH_ELEMENT_TYPE.get(vtk_type)
+            if not gmsh_type:
+                raise ValueError(
+                    f"Unsupported VTK cell type {vtk_type} in marker '{marker_name}'. "
+                    f"Cannot import marker chunk with unsupported cell type.")
+
+            # Get number of nodes for this type
+            props = gmsh.model.mesh.getElementProperties(gmsh_type)
+            num_nodes = props[3]
+
+            # Extract nodes for this chunk
+            chunk_nodes_flat = marker_nodes[node_offset:node_offset +
+                                            count * num_nodes]
+            chunk_node_tags = chunk_nodes_flat + 1  # Convert to 1-based tags
+
+            # Generate element tags
+            element_tags = np.arange(
+                next_element_tag, next_element_tag + count)
+            next_element_tag += count
 
             gmsh.model.mesh.addElements(
-                dim=2,
-                tag=surface_tag,  # must match the discrete entity
+                dim=marker_dim,
+                tag=entity_tag,
                 elementTypes=[gmsh_type],
                 elementTags=[element_tags],
-                nodeTags=[element_node_tags]
+                nodeTags=[chunk_node_tags]
             )
-        else:
-            # Count unsupported elements for warning
-            unsupported_count = np.sum(mesh.cell_types == cell_type)
-            print(
-                f"Warning: Unsupported VTK cell type {cell_type}, skipping {unsupported_count} elements")
+
+            node_offset += count * num_nodes
+
+        # Create physical group
+        p_tag = gmsh.model.addPhysicalGroup(marker_dim, [entity_tag])
+        gmsh.model.setPhysicalName(marker_dim, p_tag, marker_name)
