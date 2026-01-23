@@ -1,6 +1,6 @@
 """Integration tests for all examples with mesh property validation."""
 
-import unittest
+import pytest
 import numpy as np
 import cadquery as cq
 import meshly
@@ -8,28 +8,28 @@ from meshql import GeometryQL, Split
 from meshql.utils.shapes import generate_naca4_airfoil
 
 
-class BaseIntegrationTest(unittest.TestCase):
+class TestBaseIntegration:
     """Integration tests for all examples from the examples/ directory."""
 
-    def setUp(self):
+    def setup_method(self):
         """Set up test fixtures, clear cache for clean runs."""
         pass
 
     def _validate_mesh_properties(self, mesh, description=""):
         """Common mesh validation helper method - simplified."""
-        self.assertIsInstance(mesh, meshly.mesh.Mesh,
-                              f"{description}: Should be meshly.Mesh instance")
+        assert isinstance(mesh, meshly.mesh.Mesh), \
+            f"{description}: Should be meshly.Mesh instance"
 
         # Basic validation
-        self.assertGreater(len(mesh.vertices), 0,
-                           f"{description}: Should have vertices")
-        self.assertGreater(len(mesh.indices), 0,
-                           f"{description}: Should have indices")
-        self.assertEqual(
-            mesh.vertices.shape[1], 3, f"{description}: Should have 3D coordinates")
+        assert len(mesh.vertices) > 0, \
+            f"{description}: Should have vertices"
+        assert len(mesh.indices) > 0, \
+            f"{description}: Should have indices"
+        assert mesh.vertices.shape[1] == 3, \
+            f"{description}: Should have 3D coordinates"
 
 
-class CubeExamplesTest(BaseIntegrationTest):
+class TestCubeExamples(TestBaseIntegration):
     """Test cases for cube.ipynb examples."""
 
     def test_cube_basic_with_split(self):
@@ -55,7 +55,7 @@ class CubeExamplesTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        assert ql._mesh is not None, "Should generate mesh"
         self._validate_mesh_properties(ql._mesh, "Basic cube with split")
 
     def test_cube_with_boundary_layer(self):
@@ -84,7 +84,7 @@ class CubeExamplesTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        assert ql._mesh is not None, "Should generate mesh"
         self._validate_mesh_properties(ql._mesh, "Cube with boundary layer")
 
     def test_meshly_cube_input(self):
@@ -117,11 +117,11 @@ class CubeExamplesTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        assert ql._mesh is not None, "Should generate mesh"
         self._validate_mesh_properties(ql._mesh, "Meshly cube input")
 
 
-class InviscidWedgeExampleTest(BaseIntegrationTest):
+class TestInviscidWedgeExample(TestBaseIntegration):
     """Test case for inviscid_wedge.ipynb example."""
 
     def test_inviscid_wedge(self):
@@ -147,11 +147,11 @@ class InviscidWedgeExampleTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(geo._mesh, "Should generate mesh")
+        assert geo._mesh is not None, "Should generate mesh"
         self._validate_mesh_properties(geo._mesh, "Inviscid wedge")
 
 
-class NACA0012ExampleTest(BaseIntegrationTest):
+class TestNACA0012Example(TestBaseIntegration):
     """Test cases for naca0012.ipynb examples."""
 
     def test_naca0012_2d_boundary_layer(self):
@@ -184,7 +184,7 @@ class NACA0012ExampleTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(mesh._mesh, "Should generate mesh")
+        assert mesh._mesh is not None, "Should generate mesh"
         self._validate_mesh_properties(
             mesh._mesh, "NACA0012 2D with boundary layer")
 
@@ -217,11 +217,11 @@ class NACA0012ExampleTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(geo._mesh, "Should generate mesh")
+        assert geo._mesh is not None, "Should generate mesh"
         self._validate_mesh_properties(geo._mesh, "NACA0012 3D wing")
 
 
-class ProgressionExampleTest(BaseIntegrationTest):
+class TestProgressionExample(TestBaseIntegration):
     """Test case for progression.ipynb example."""
 
     def test_structured_grid_with_bump(self):
@@ -249,11 +249,11 @@ class ProgressionExampleTest(BaseIntegrationTest):
             )
 
         # Validate mesh properties
-        self.assertIsNotNone(ql._mesh, "Should generate mesh")
+        assert ql._mesh is not None, "Should generate mesh"
         self._validate_mesh_properties(ql._mesh, "Structured grid with bump")
 
 
-class MeshPropertiesValidationTest(BaseIntegrationTest):
+class TestMeshPropertiesValidation(TestBaseIntegration):
     """Test mesh properties validation specific to meshly.Mesh objects."""
 
     def test_meshly_mesh_comprehensive_properties(self):
@@ -267,22 +267,22 @@ class MeshPropertiesValidationTest(BaseIntegrationTest):
             )
 
         mesh = ql._mesh
-        self.assertIsNotNone(mesh, "Should generate mesh")
+        assert mesh is not None, "Should generate mesh"
 
         # Test basic properties
-        self.assertIsInstance(mesh, meshly.mesh.Mesh,
-                              "Should be meshly.Mesh instance")
+        assert isinstance(mesh, meshly.mesh.Mesh), \
+            "Should be meshly.Mesh instance"
 
         # Test array properties
-        self.assertIsInstance(mesh.vertices, np.ndarray)
-        self.assertIsInstance(mesh.indices, np.ndarray)
-        self.assertEqual(mesh.vertices.dtype, np.float32)
-        self.assertEqual(mesh.indices.dtype, np.uint32)
+        assert isinstance(mesh.vertices, np.ndarray)
+        assert isinstance(mesh.indices, np.ndarray)
+        assert mesh.vertices.dtype == np.float32
+        assert mesh.indices.dtype == np.uint32
 
         # Test computed properties
-        self.assertIsInstance(mesh.vertex_count, int)
-        self.assertGreater(mesh.vertex_count, 0)
-        self.assertEqual(mesh.vertex_count, len(mesh.vertices))
+        assert isinstance(mesh.vertex_count, int)
+        assert mesh.vertex_count > 0
+        assert mesh.vertex_count == len(mesh.vertices)
 
         # Test additional properties exist
         properties_to_check = [
@@ -290,13 +290,13 @@ class MeshPropertiesValidationTest(BaseIntegrationTest):
             'index_count', 'dim'
         ]
         for prop in properties_to_check:
-            self.assertTrue(hasattr(mesh, prop),
-                            f"Mesh should have {prop} property")
+            assert hasattr(mesh, prop), \
+                f"Mesh should have {prop} property"
 
         # Test that indices reference valid vertices
         if len(mesh.indices) > 0:
-            self.assertGreaterEqual(mesh.indices.min(), 0)
-            self.assertLess(mesh.indices.max(), mesh.vertex_count)
+            assert mesh.indices.min() >= 0
+            assert mesh.indices.max() < mesh.vertex_count
 
     def test_mesh_data_consistency(self):
         """Test consistency of mesh data across different examples."""
@@ -323,19 +323,14 @@ class MeshPropertiesValidationTest(BaseIntegrationTest):
 
         # Validate consistency across examples
         for name, mesh in examples_data:
-            with self.subTest(example=name):
-                self.assertIsInstance(mesh, meshly.mesh.Mesh)
-                self.assertEqual(mesh.vertices.shape[1], 3,
-                                 f"{name}: Should have 3D coordinates")
-                self.assertEqual(mesh.vertices.dtype, np.float32,
-                                 f"{name}: Vertices should be float32")
-                self.assertEqual(mesh.indices.dtype, np.uint32,
-                                 f"{name}: Indices should be uint32")
-                self.assertGreater(mesh.vertex_count, 0,
-                                   f"{name}: Should have vertices")
-                self.assertGreater(len(mesh.indices), 0,
-                                   f"{name}: Should have indices")
-
-
-if __name__ == '__main__':
-    unittest.main()
+            assert isinstance(mesh, meshly.mesh.Mesh)
+            assert mesh.vertices.shape[1] == 3, \
+                f"{name}: Should have 3D coordinates"
+            assert mesh.vertices.dtype == np.float32, \
+                f"{name}: Vertices should be float32"
+            assert mesh.indices.dtype == np.uint32, \
+                f"{name}: Indices should be uint32"
+            assert mesh.vertex_count > 0, \
+                f"{name}: Should have vertices"
+            assert len(mesh.indices) > 0, \
+                f"{name}: Should have indices"

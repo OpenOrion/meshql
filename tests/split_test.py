@@ -1,16 +1,16 @@
 """Unit tests for meshql.preprocessing.split module."""
 
-import unittest
+import pytest
 import cadquery as cq
 import numpy as np
 from meshql.core.ql import GeometryQL, GeometryQLContext
 from meshql.preprocessing.split import Split
 
 
-class SplitTest(unittest.TestCase):
+class TestSplit:
     """Test cases for Split preprocessing functionality."""
 
-    def setUp(self):
+    def setup_method(self):
         """Set up test fixtures."""
         self.cube = cq.Workplane("XY").box(10, 10, 10)
         self.context = GeometryQLContext()
@@ -19,43 +19,43 @@ class SplitTest(unittest.TestCase):
 
     def test_split_state_initialization(self):
         """Test Split object initializes with correct state."""
-        self.assertEqual(self.split.workplane, self.cube)
-        self.assertEqual(len(self.split.pending_splits), 0)
+        assert self.split.workplane == self.cube
+        assert len(self.split.pending_splits) == 0
         # face_edge_groups should now be computed from the actual cube geometry
-        self.assertGreater(len(self.split.face_edge_groups), 0)
+        assert len(self.split.face_edge_groups) > 0
         # A cube has 12 edges, so face_edge_groups should have entries
-        self.assertEqual(len(self.split.face_edge_groups), 12)
+        assert len(self.split.face_edge_groups) == 12
 
     def test_pending_splits_accumulation(self):
         """Test that split operations accumulate in pending_splits."""
         initial_count = len(self.split.pending_splits)
 
         self.split.from_plane(base_pnt=(0, 0, 0))
-        self.assertEqual(len(self.split.pending_splits), initial_count + 1)
+        assert len(self.split.pending_splits) == initial_count + 1
 
         self.split.from_plane(base_pnt=(5, 0, 0))
-        self.assertEqual(len(self.split.pending_splits), initial_count + 2)
+        assert len(self.split.pending_splits) == initial_count + 2
 
         # Verify each pending split contains face objects
         for split_group in self.split.pending_splits:
-            self.assertIsInstance(split_group, list)
+            assert isinstance(split_group, list)
             for face in split_group:
-                self.assertIsInstance(face, cq.Face)
+                assert isinstance(face, cq.Face)
 
     def test_split_face_generation_properties(self):
         """Test that generated split faces have expected geometric properties."""
         self.split.from_plane(base_pnt=(0, 0, 0), angle=(0, 0, 1))
 
         # Verify we have a split face
-        self.assertEqual(len(self.split.pending_splits), 1)
+        assert len(self.split.pending_splits) == 1
         split_face = self.split.pending_splits[0][0]
 
         # Verify it's a valid face with area > 0
-        self.assertGreater(split_face.Area(), 0)
+        assert split_face.Area() > 0
 
         # Verify face center is near expected position
         face_center = split_face.Center()
-        self.assertAlmostEqual(face_center.z, 0, places=3)
+        assert face_center.z == pytest.approx(0, abs=1e-3)
 
     def test_from_plane_sizing_parameter_effect(self):
         """Test that sizing parameter affects plane dimensions."""
@@ -70,8 +70,8 @@ class SplitTest(unittest.TestCase):
         infinite_face = self.split.pending_splits[0][0]
 
         # Both should be valid faces
-        self.assertGreater(maxdim_area, 0)
-        self.assertGreater(infinite_face.Area(), 0)
+        assert maxdim_area > 0
+        assert infinite_face.Area() > 0
 
     def test_from_lines_creates_valid_split_faces(self):
         """Test that from_lines creates geometrically valid split faces."""
@@ -79,15 +79,15 @@ class SplitTest(unittest.TestCase):
         lines = ((-5, 0, 0), (15, 0, 0))
         self.split.from_lines(lines=lines)
 
-        self.assertEqual(len(self.split.pending_splits), 1)
+        assert len(self.split.pending_splits) == 1
         split_face = self.split.pending_splits[0][0]
 
         # Verify face properties
-        self.assertGreater(split_face.Area(), 0)
+        assert split_face.Area() > 0
         # Face should extend through the cube area
         bbox = split_face.BoundingBox()
-        self.assertLess(bbox.xmin, -4)  # Should extend beyond cube
-        self.assertGreater(bbox.xmax, 14)  # Should extend beyond cube
+        assert bbox.xmin < -4  # Should extend beyond cube
+        assert bbox.xmax > 14  # Should extend beyond cube
 
     def test_from_edge_direction_parameter_effect(self):
         """Test that direction parameter affects split face generation."""
@@ -95,22 +95,22 @@ class SplitTest(unittest.TestCase):
 
         # Test "both" direction - verify split was created
         self.split.from_edge(edge=cube_edge, dir="both")
-        self.assertEqual(len(self.split.pending_splits), 1)
+        assert len(self.split.pending_splits) == 1
 
         # Clear and test "towards" direction
         self.split.pending_splits.clear()
         self.split.from_edge(edge=cube_edge, dir="towards")
-        self.assertEqual(len(self.split.pending_splits), 1)
+        assert len(self.split.pending_splits) == 1
 
         # Clear and test "away" direction
         self.split.pending_splits.clear()
         self.split.from_edge(edge=cube_edge, dir="away")
-        self.assertEqual(len(self.split.pending_splits), 1)
+        assert len(self.split.pending_splits) == 1
 
         # All directions should produce some split geometry
         # (Even if area calculation fails, the split face should exist)
         towards_face = self.split.pending_splits[0][0]
-        self.assertIsInstance(towards_face, cq.Face)
+        assert isinstance(towards_face, cq.Face)
 
     def test_from_pnts_creates_face_from_points(self):
         """Test that from_pnts creates face matching input geometry."""
@@ -118,17 +118,17 @@ class SplitTest(unittest.TestCase):
         points = [(0, 0, 0), (5, 0, 0), (5, 5, 0), (0, 5, 0)]
         self.split.from_pnts(points)
 
-        self.assertEqual(len(self.split.pending_splits), 1)
+        assert len(self.split.pending_splits) == 1
         split_face = self.split.pending_splits[0][0]
 
         # Verify face properties match expected square
-        self.assertAlmostEqual(split_face.Area(), 25, places=3)  # 5x5 square
+        assert split_face.Area() == pytest.approx(25, abs=1e-3)  # 5x5 square
 
         # Verify face center
         center = split_face.Center()
-        self.assertAlmostEqual(center.x, 2.5, places=3)
-        self.assertAlmostEqual(center.y, 2.5, places=3)
-        self.assertAlmostEqual(center.z, 0, places=3)
+        assert center.x == pytest.approx(2.5, abs=1e-3)
+        assert center.y == pytest.approx(2.5, abs=1e-3)
+        assert center.z == pytest.approx(0, abs=1e-3)
 
     def test_push_method_state_management(self):
         """Test that push method correctly manages pending splits state."""
@@ -138,13 +138,13 @@ class SplitTest(unittest.TestCase):
 
         # Test single face push
         self.split.push(face1)
-        self.assertEqual(len(self.split.pending_splits), 1)
-        self.assertEqual(len(self.split.pending_splits[0]), 1)
+        assert len(self.split.pending_splits) == 1
+        assert len(self.split.pending_splits[0]) == 1
 
         # Test multiple faces push (as single group)
         self.split.push([face1, face2])
-        self.assertEqual(len(self.split.pending_splits), 2)
-        self.assertEqual(len(self.split.pending_splits[1]), 2)
+        assert len(self.split.pending_splits) == 2
+        assert len(self.split.pending_splits[1]) == 2
 
     def test_apply_method_geometry_modification(self):
         """Test that apply method actually modifies the workplane geometry."""
@@ -159,10 +159,10 @@ class SplitTest(unittest.TestCase):
         result_workplane = applied_split.workplane
         # Verify we get more solids after splitting
         result_solids = len(result_workplane.solids().vals())
-        self.assertGreaterEqual(result_solids, initial_solids)
+        assert result_solids >= initial_solids
 
         # Verify pending splits are cleared after apply
-        self.assertEqual(len(self.split.pending_splits), 0)
+        assert len(self.split.pending_splits) == 0
 
     def test_apply_clears_pending_splits_state(self):
         """Test that apply method clears the pending splits state."""
@@ -171,12 +171,12 @@ class SplitTest(unittest.TestCase):
         self.split.from_plane(base_pnt=(-2, 0, 0))
 
         # Verify splits are pending
-        self.assertEqual(len(self.split.pending_splits), 2)
+        assert len(self.split.pending_splits) == 2
 
         # Apply and verify state is cleared
         applied_split = self.split.apply()
-        self.assertEqual(len(self.split.pending_splits), 0)
-        self.assertIsInstance(applied_split.workplane, cq.Workplane)
+        assert len(self.split.pending_splits) == 0
+        assert isinstance(applied_split.workplane, cq.Workplane)
 
     def test_chaining_preserves_split_state(self):
         """Test that method chaining correctly accumulates splits."""
@@ -188,16 +188,16 @@ class SplitTest(unittest.TestCase):
         )
 
         # Verify chaining returns self
-        self.assertEqual(result, self.split)
+        assert result == self.split
 
         # Verify all splits were accumulated
-        self.assertEqual(len(self.split.pending_splits), 3)
+        assert len(self.split.pending_splits) == 3
 
         # Verify each split contains valid faces
         for split_group in self.split.pending_splits:
             for face in split_group:
-                self.assertIsInstance(face, cq.Face)
-                self.assertGreater(face.Area(), 0)
+                assert isinstance(face, cq.Face)
+                assert face.Area() > 0
 
     def test_split_face_intersection_with_geometry(self):
         """Test that split faces actually intersect with the target geometry."""
@@ -210,7 +210,7 @@ class SplitTest(unittest.TestCase):
         intersected_objects = intersection.vals()
 
         # Should have intersection objects (edges/faces)
-        self.assertGreater(len(intersected_objects), 0)
+        assert len(intersected_objects) > 0
 
     def test_axis_parameter_affects_split_orientation(self):
         """Test that axis parameter affects split face generation for different axes."""
@@ -222,11 +222,11 @@ class SplitTest(unittest.TestCase):
             self.split.from_edge(edge=cube_edge, axis=axis)
 
             # Verify split was created
-            self.assertEqual(len(self.split.pending_splits), 1,
-                             f"Split should be created for axis {axis}")
+            assert len(self.split.pending_splits) == 1, \
+                f"Split should be created for axis {axis}"
             split_face = self.split.pending_splits[0][0]
-            self.assertIsInstance(split_face, (cq.Face, cq.Compound),
-                                  f"Split for axis {axis} should be Face or Compound")
+            assert isinstance(split_face, (cq.Face, cq.Compound)), \
+                f"Split for axis {axis} should be Face or Compound"
 
     def test_split_geometry_bounding_relationships(self):
         """Test that split faces have expected spatial relationships to geometry."""
@@ -238,16 +238,16 @@ class SplitTest(unittest.TestCase):
         split_bbox = split_face.BoundingBox()
 
         # Split face should encompass the cube area
-        self.assertLessEqual(split_bbox.xmin, bbox.xmin - 1)
-        self.assertGreaterEqual(split_bbox.xmax, bbox.xmax + 1)
-        self.assertLessEqual(split_bbox.ymin, bbox.ymin - 1)
-        self.assertGreaterEqual(split_bbox.ymax, bbox.ymax + 1)
+        assert split_bbox.xmin <= bbox.xmin - 1
+        assert split_bbox.xmax >= bbox.xmax + 1
+        assert split_bbox.ymin <= bbox.ymin - 1
+        assert split_bbox.ymax >= bbox.ymax + 1
 
 
-class SplitIntegrationTest(unittest.TestCase):
+class TestSplitIntegration:
     """Integration tests for Split with complex geometries and workflows."""
 
-    def setUp(self):
+    def setup_method(self):
         """Set up complex test geometry."""
         # Create a more complex shape for integration testing
         self.complex_shape = (
@@ -271,13 +271,13 @@ class SplitIntegrationTest(unittest.TestCase):
             90, 0, 0))  # Vertical plane
 
         # Verify split accumulation
-        self.assertEqual(len(split.pending_splits), 2)
+        assert len(split.pending_splits) == 2
 
         # Verify each split contains valid faces
         for split_group in split.pending_splits:
             for face in split_group:
-                self.assertIsInstance(face, cq.Face)
-                self.assertGreater(face.Area(), 0)
+                assert isinstance(face, cq.Face)
+                assert face.Area() > 0
 
     def test_multiple_line_sets_geometric_properties(self):
         """Test that multiple line sets create geometrically consistent split faces."""
@@ -291,15 +291,15 @@ class SplitIntegrationTest(unittest.TestCase):
         split.from_lines(lines=horizontal_lines)
         split.from_lines(lines=vertical_lines)
 
-        self.assertEqual(len(split.pending_splits), 2)
+        assert len(split.pending_splits) == 2
 
         # Verify geometric properties of generated faces
         horizontal_face = split.pending_splits[0][0]
         vertical_face = split.pending_splits[1][0]
 
         # Both should be large faces that extend beyond geometry
-        self.assertGreater(horizontal_face.Area(), 1000)
-        self.assertGreater(vertical_face.Area(), 1000)
+        assert horizontal_face.Area() > 1000
+        assert vertical_face.Area() > 1000
 
         # Verify faces have expected orientations
         h_normal = horizontal_face.normalAt()
@@ -307,7 +307,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
         # Should be roughly perpendicular
         dot_product = abs(h_normal.dot(v_normal))
-        self.assertLess(dot_product, 0.2)
+        assert dot_product < 0.2
 
     def test_applied_splits_modify_geometry_count(self):
         """Test that applying splits actually increases geometry complexity."""
@@ -326,7 +326,7 @@ class SplitIntegrationTest(unittest.TestCase):
         result_solids = len(result_workplane.solids().vals())
 
         # Should have more solid pieces after splitting
-        self.assertGreaterEqual(result_solids, initial_solids)
+        assert result_solids >= initial_solids
 
     def test_split_face_coverage_of_complex_geometry(self):
         """Test that split faces adequately cover complex geometry."""
@@ -341,10 +341,10 @@ class SplitIntegrationTest(unittest.TestCase):
         split_bbox = split_face.BoundingBox()
 
         # Split should cover the geometry extent and more
-        self.assertLessEqual(split_bbox.xmin, bbox.xmin - 5)
-        self.assertGreaterEqual(split_bbox.xmax, bbox.xmax + 5)
-        self.assertLessEqual(split_bbox.ymin, bbox.ymin - 5)
-        self.assertGreaterEqual(split_bbox.ymax, bbox.ymax + 5)
+        assert split_bbox.xmin <= bbox.xmin - 5
+        assert split_bbox.xmax >= bbox.xmax + 5
+        assert split_bbox.ymin <= bbox.ymin - 5
+        assert split_bbox.ymax >= bbox.ymax + 5
 
     def test_edge_based_splits_follow_geometry_features(self):
         """Test that edge-based splits respect geometry features."""
@@ -352,7 +352,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
         # Get an edge from the complex shape
         edges = self.complex_shape.edges().vals()
-        self.assertGreater(len(edges), 0, "Complex shape should have edges")
+        assert len(edges) > 0, "Complex shape should have edges"
 
         test_edge = edges[0]
 
@@ -360,11 +360,11 @@ class SplitIntegrationTest(unittest.TestCase):
         split.from_edge(edge=test_edge, dir="both")
 
         # Verify split was created
-        self.assertEqual(len(split.pending_splits), 1)
+        assert len(split.pending_splits) == 1
         split_geometry = split.pending_splits[0][0]
 
         # Verify split geometry was created and is a valid shape
-        self.assertIsInstance(split_geometry, (cq.Face, cq.Compound))
+        assert isinstance(split_geometry, (cq.Face, cq.Compound))
 
         # Test intersection with original geometry (if the geometry is valid)
         try:
@@ -373,8 +373,7 @@ class SplitIntegrationTest(unittest.TestCase):
             intersection_objects = intersection.vals()
             # If intersection works, should have some objects
             if len(intersection_objects) > 0:
-                self.assertGreater(len(intersection_objects),
-                                   0, "Split should intersect geometry")
+                assert len(intersection_objects) > 0, "Split should intersect geometry"
         except:
             # If intersection fails, at least verify split was created
             pass
@@ -395,8 +394,7 @@ class SplitIntegrationTest(unittest.TestCase):
         # After refresh, face_edge_groups should be populated
         refreshed_count = len(split.face_edge_groups)
         # Should have more face-edge relationships after refresh
-        self.assertGreaterEqual(
-            refreshed_count, initial_face_edge_groups_count)
+        assert refreshed_count >= initial_face_edge_groups_count
 
     def test_point_based_splits_create_accurate_faces(self):
         """Test that point-based splits create faces with accurate geometry."""
@@ -406,17 +404,17 @@ class SplitIntegrationTest(unittest.TestCase):
         points = [(5, 5, 2), (15, 5, 2), (15, 15, 2), (5, 15, 2)]
         split.from_pnts(points)
 
-        self.assertEqual(len(split.pending_splits), 1)
+        assert len(split.pending_splits) == 1
         split_face = split.pending_splits[0][0]
 
         # Verify face has expected area (10x10 square = 100)
-        self.assertAlmostEqual(split_face.Area(), 100, places=1)
+        assert split_face.Area() == pytest.approx(100, abs=0.1)
 
         # Verify face center
         center = split_face.Center()
-        self.assertAlmostEqual(center.x, 10, places=1)
-        self.assertAlmostEqual(center.y, 10, places=1)
-        self.assertAlmostEqual(center.z, 2, places=1)
+        assert center.x == pytest.approx(10, abs=0.1)
+        assert center.y == pytest.approx(10, abs=0.1)
+        assert center.z == pytest.approx(2, abs=0.1)
 
     def test_sequential_apply_operations_maintain_state(self):
         """Test that multiple apply operations maintain correct state."""
@@ -428,23 +426,23 @@ class SplitIntegrationTest(unittest.TestCase):
 
         # Apply first set
         first_applied_split = split.apply()
-        self.assertEqual(len(split.pending_splits), 0)  # Should be cleared
+        assert len(split.pending_splits) == 0  # Should be cleared
 
         # Add second set of splits
         split.from_plane(base_pnt=(0, 5, 0), angle=(90, 0, 0))
         split.from_plane(base_pnt=(0, -5, 0), angle=(90, 0, 0))
 
         # Verify new splits accumulated
-        self.assertEqual(len(split.pending_splits), 2)
+        assert len(split.pending_splits) == 2
 
         # Apply second set
         second_applied_split = split.apply()
         # Should be cleared again
-        self.assertEqual(len(split.pending_splits), 0)
+        assert len(split.pending_splits) == 0
 
         # Both results should be valid workplanes
-        self.assertIsInstance(first_applied_split.workplane, cq.Workplane)
-        self.assertIsInstance(second_applied_split.workplane, cq.Workplane)
+        assert isinstance(first_applied_split.workplane, cq.Workplane)
+        assert isinstance(second_applied_split.workplane, cq.Workplane)
 
     def test_split_face_intersection_accuracy(self):
         """Test accuracy of split face intersections with complex geometry."""
@@ -459,7 +457,7 @@ class SplitIntegrationTest(unittest.TestCase):
 
         # Should have intersection geometry
         intersection_vals = intersection.vals()
-        self.assertGreater(len(intersection_vals), 0)
+        assert len(intersection_vals) > 0
 
         # Check that intersection includes both outer boundary and hole
         if len(intersection_vals) > 0:
@@ -467,8 +465,7 @@ class SplitIntegrationTest(unittest.TestCase):
             total_intersection_area = sum(obj.Area() if hasattr(obj, 'Area') else 0
                                           for obj in intersection_vals)
             expected_area = 20 * 20 - np.pi * 5 * 5  # Box minus circular hole
-            self.assertGreater(total_intersection_area,
-                               expected_area * 0.8)  # Allow some tolerance
+            assert total_intersection_area > expected_area * 0.8  # Allow some tolerance
 
     def test_preprocessing_function_workflow_properties(self):
         """Test split workflow properties when used as preprocessing function."""
@@ -483,22 +480,18 @@ class SplitIntegrationTest(unittest.TestCase):
         result = preprocess_func(self.complex_shape)
 
         # Verify split state
-        self.assertEqual(len(result.pending_splits), 2)
+        assert len(result.pending_splits) == 2
 
         # Verify geometric properties of generated splits
         plane1 = result.pending_splits[0][0]
         plane2 = result.pending_splits[1][0]
 
         # Both planes should be large
-        self.assertGreater(plane1.Area(), 1000)
-        self.assertGreater(plane2.Area(), 1000)
+        assert plane1.Area() > 1000
+        assert plane2.Area() > 1000
 
         # Planes should be roughly perpendicular
         normal1 = plane1.normalAt()
         normal2 = plane2.normalAt()
         dot_product = abs(normal1.dot(normal2))
-        self.assertLess(dot_product, 0.2)
-
-
-if __name__ == '__main__':
-    unittest.main()
+        assert dot_product < 0.2

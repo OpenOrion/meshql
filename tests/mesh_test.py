@@ -1,7 +1,7 @@
 """Unit tests for meshql.mesh module."""
 
-import unittest
-from unittest.mock import Mock, patch
+import pytest
+from unittest.mock import patch
 import numpy as np
 import gmsh
 import meshly
@@ -9,20 +9,19 @@ from meshql.mesh.mesh import GmshElementType
 from meshql.mesh.loaders import load_from_gmsh, load_to_gmsh
 
 
-class MeshTest(unittest.TestCase):
+class TestMesh:
     """Test cases for mesh functionality."""
 
     def test_gmsh_element_type_enum(self):
         """Test GmshElementType enum values."""
-        self.assertIsInstance(GmshElementType, type)
+        assert isinstance(GmshElementType, type)
 
         # Check that enum has expected values
         element_types = list(GmshElementType)
-        self.assertGreater(len(element_types), 0)
+        assert len(element_types) > 0
 
     @patch('meshql.mesh.loaders.gmsh')
-    @patch('meshql.mesh.loaders.meshly')
-    def test_load_from_gmsh_basic(self, mock_meshly, mock_gmsh):
+    def test_load_from_gmsh_basic(self, mock_gmsh):
         """Test load_from_gmsh basic functionality."""
         # Mock GMSH model data
         mock_gmsh.model.mesh.getNodes.return_value = (
@@ -38,10 +37,6 @@ class MeshTest(unittest.TestCase):
             [np.array([1, 2, 3])]  # node connectivity
         )
 
-        # Mock meshly.Mesh constructor
-        mock_mesh = Mock()
-        mock_meshly.Mesh.return_value = mock_mesh
-
         # Test the function
         try:
             result = load_from_gmsh()
@@ -51,8 +46,7 @@ class MeshTest(unittest.TestCase):
             pass
 
     @patch('meshql.mesh.loaders.gmsh')
-    @patch('meshql.mesh.loaders.meshly')
-    def test_load_from_gmsh_with_parameters(self, mock_meshly, mock_gmsh):
+    def test_load_from_gmsh_with_parameters(self, mock_gmsh):
         """Test load_from_gmsh with parameters."""
         # Mock GMSH responses
         mock_gmsh.model.mesh.getNodes.return_value = ([], [], None)
@@ -68,18 +62,24 @@ class MeshTest(unittest.TestCase):
     @patch('meshql.mesh.loaders.gmsh')
     def test_load_to_gmsh_basic(self, mock_gmsh):
         """Test load_to_gmsh basic functionality."""
-        # Create a simple mock mesh
-        mock_mesh = Mock()
-        mock_mesh.vertices = np.array(
-            [[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
-        mock_mesh.indices = np.array([[0, 1, 2]], dtype=np.uint32)
+        # Create a simple meshly.Mesh
+        mesh = meshly.Mesh(
+            vertices=np.array([
+                [0, 0, 0], [1, 0, 0], [0, 1, 0]
+            ], dtype=np.float32),
+            indices=np.array([0, 1, 2], dtype=np.uint32),
+            index_sizes=np.array([3], dtype=np.uint32),
+            cell_types=np.array([5], dtype=np.uint8),  # VTK_TRIANGLE = 5
+        )
 
         # Mock GMSH methods
         mock_gmsh.model.mesh.addNodes.return_value = None
         mock_gmsh.model.mesh.addElements.return_value = None
+        mock_gmsh.model.addDiscreteEntity.return_value = 1
+        mock_gmsh.model.mesh.getElementProperties.return_value = ("Triangle", 2, 1, 3)
 
         try:
-            load_to_gmsh(mock_mesh, surface_tag=1)
+            load_to_gmsh(mesh, surface_tag=1)
             # Should not raise exception with properly mocked GMSH
         except Exception:
             # Expected behavior with mocked GMSH
@@ -88,73 +88,51 @@ class MeshTest(unittest.TestCase):
     @patch('meshql.mesh.loaders.gmsh')
     def test_load_to_gmsh_with_surface_tag(self, mock_gmsh):
         """Test load_to_gmsh with custom surface tag."""
-        mock_mesh = Mock()
-        mock_mesh.vertices = np.array([[0, 0, 0]], dtype=np.float32)
-        mock_mesh.indices = np.array([[0]], dtype=np.uint32)
+        mesh = meshly.Mesh(
+            vertices=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
+            indices=np.array([0, 1, 2], dtype=np.uint32),
+            index_sizes=np.array([3], dtype=np.uint32),
+            cell_types=np.array([5], dtype=np.uint8),  # VTK_TRIANGLE = 5
+        )
+
+        mock_gmsh.model.addDiscreteEntity.return_value = 42
+        mock_gmsh.model.mesh.getElementProperties.return_value = ("Triangle", 2, 1, 3)
 
         try:
-            load_to_gmsh(mock_mesh, surface_tag=42)
+            load_to_gmsh(mesh, surface_tag=42)
             # Test that custom surface tag is used
         except Exception:
             pass
 
-    @patch('meshql.mesh.loaders.meshly')
     @patch('meshql.mesh.loaders.gmsh')
-    def test_load_to_gmsh_with_markers(self, mock_gmsh, mock_meshly):
+    def test_load_to_gmsh_with_markers(self, mock_gmsh):
         """Test load_to_gmsh with markers/physical groups."""
-        # Create a fake Mesh class for isinstance check
-        class FakeMesh:
-            def get_polygon_indices(self): pass
-            vertices = None
-            indices = None
-            cell_types = None
-            markers = None
-            marker_cell_types = None
-
-        mock_meshly.Mesh = FakeMesh
-
-        # Create a mock mesh with markers
-        mock_mesh = Mock(spec=FakeMesh)
-        # 3 vertices
-        mock_mesh.vertices = np.array(
-            [[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
-        # 1 triangle
-        mock_mesh.indices = np.array([0, 1, 2], dtype=np.uint32)
-        mock_mesh.cell_types = np.array(
-            [5], dtype=np.uint8)  # VTK_TRIANGLE = 5
-        mock_mesh.get_polygon_indices.return_value = np.array(
-            [[0, 1, 2]], dtype=np.uint32)
-
-        # Markers
-        # Marker "boundary": 2 edges (lines)
-        # Edge 1: nodes 0-1
-        # Edge 2: nodes 1-2
-        mock_mesh.markers = {
-            "boundary": np.array([0, 1, 1, 2], dtype=np.uint32)
-        }
-        # VTK_LINE = 3
-        mock_mesh.marker_cell_types = {
-            "boundary": np.array([3, 3], dtype=np.uint8)
-        }
+        # Create a meshly.Mesh with markers
+        mesh = meshly.Mesh(
+            vertices=np.array([
+                [0, 0, 0], [1, 0, 0], [0, 1, 0]
+            ], dtype=np.float32),
+            indices=np.array([0, 1, 2], dtype=np.uint32),
+            index_sizes=np.array([3], dtype=np.uint32),
+            cell_types=np.array([5], dtype=np.uint8),  # VTK_TRIANGLE = 5
+            markers={
+                "boundary": np.array([0, 1, 1, 2], dtype=np.uint32)  # 2 edges (lines)
+            },
+            marker_cell_types={
+                "boundary": np.array([3, 3], dtype=np.uint8)  # VTK_LINE = 3
+            }
+        )
 
         # Mock GMSH methods
         # name, dim, order, num_nodes
         mock_gmsh.model.mesh.getElementProperties.return_value = (
             "Line 2", 1, 1, 2
         )
-        # tag for marker entity
+        # tag for surface entity and marker entity
         mock_gmsh.model.addDiscreteEntity.side_effect = [1, 10]
         mock_gmsh.model.addPhysicalGroup.return_value = 20  # tag for physical group
 
-        # Ensure isinstance passes
-        # We need to make sure that when loaders.py does isinstance(mesh, meshly.Mesh), it returns True.
-        # Since we patched meshly, meshly.Mesh is now FakeMesh.
-        # And mock_mesh is an instance of FakeMesh (or spec=FakeMesh which makes isinstance work if using Mock properly,
-        # but simple Mock(spec=FakeMesh) works with isinstance(obj, FakeMesh)).
-
-        # Actually, Mock(spec=Class) makes isinstance(mock, Class) return True.
-
-        load_to_gmsh(mock_mesh, surface_tag=1)
+        load_to_gmsh(mesh, surface_tag=1)
 
         # Verify main mesh loading
         mock_gmsh.model.addDiscreteEntity.assert_any_call(2, 1)
@@ -165,11 +143,7 @@ class MeshTest(unittest.TestCase):
         mock_gmsh.model.addDiscreteEntity.assert_any_call(1)
 
         # 2. Check if elements were added to the marker entity
-        # We expect addElements to be called for the marker
-        # args: dim, tag, elementTypes, elementTags, nodeTags
-        # We can't easily check exact numpy arrays in assert_called_with,
-        # but we can check if it was called.
-        self.assertTrue(mock_gmsh.model.mesh.addElements.called)
+        assert mock_gmsh.model.mesh.addElements.called
 
         # 3. Check physical group creation
         mock_gmsh.model.addPhysicalGroup.assert_called_with(1, [10])
@@ -178,63 +152,66 @@ class MeshTest(unittest.TestCase):
     def test_element_type_enum_completeness(self):
         """Test that GmshElementType enum has expected structure."""
         # Check that it's a proper enum
-        self.assertTrue(hasattr(GmshElementType, '__members__'))
+        assert hasattr(GmshElementType, '__members__')
 
         # Check that enum members are accessible
         members = list(GmshElementType.__members__.values())
-        self.assertGreater(len(members), 0)
+        assert len(members) > 0
 
 
-class MeshIntegrationTest(unittest.TestCase):
+class TestMeshIntegration:
     """Integration tests for mesh functionality."""
 
     def test_mesh_workflow_concept(self):
         """Test conceptual mesh workflow."""
-        # This tests the general workflow concept without requiring actual GMSH
-
-        # Simulate creating mesh data
-        vertices = np.array([
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0]
-        ], dtype=np.float32)
-
-        indices = np.array([
-            [0, 1, 2]
-        ], dtype=np.uint32)
+        # Create mesh data using meshly.Mesh
+        mesh = meshly.Mesh(
+            vertices=np.array([
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0]
+            ], dtype=np.float32),
+            indices=np.array([0, 1, 2], dtype=np.uint32),
+            index_sizes=np.array([3], dtype=np.uint32),
+            cell_types=np.array([5], dtype=np.uint8),  # VTK_TRIANGLE = 5
+        )
 
         # Validate data structure
-        self.assertEqual(vertices.shape[1], 3)  # 3D coordinates
-        self.assertEqual(len(indices[0]), 3)    # Triangle
-        self.assertEqual(vertices.dtype, np.float32)
-        self.assertEqual(indices.dtype, np.uint32)
+        assert mesh.vertices.shape[1] == 3  # 3D coordinates
+        assert mesh.vertex_count == 3
+        assert mesh.polygon_count == 1
+        assert mesh.vertices.dtype == np.float32
 
     @patch('meshql.mesh.loaders.gmsh')
-    @patch('meshql.mesh.loaders.meshly')
-    def test_roundtrip_mesh_workflow(self, mock_meshly, mock_gmsh):
+    def test_roundtrip_mesh_workflow(self, mock_gmsh):
         """Test conceptual roundtrip mesh workflow."""
-        # Mock a simple mesh
-        original_vertices = np.array(
-            [[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
-        original_indices = np.array([[0, 1, 2]], dtype=np.uint32)
+        # Create a simple meshly.Mesh
+        original_mesh = meshly.Mesh(
+            vertices=np.array([
+                [0, 0, 0], [1, 0, 0], [0, 1, 0]
+            ], dtype=np.float32),
+            indices=np.array([0, 1, 2], dtype=np.uint32),
+            index_sizes=np.array([3], dtype=np.uint32),
+            cell_types=np.array([5], dtype=np.uint8),  # VTK_TRIANGLE = 5
+        )
 
-        # Mock meshly.Mesh
-        mock_mesh = Mock()
-        mock_mesh.vertices = original_vertices
-        mock_mesh.indices = original_indices
-        mock_meshly.Mesh.return_value = mock_mesh
-
-        # Mock GMSH operations
+        # Mock GMSH operations for load_from_gmsh
+        mock_gmsh.model.getDimension.return_value = 2
         mock_gmsh.model.mesh.getNodes.return_value = (
             [1, 2, 3],
-            original_vertices.flatten(),
+            original_mesh.vertices.flatten(),
             None
         )
         mock_gmsh.model.mesh.getElements.return_value = (
             [2],  # Triangle element type
             [[1]],  # Element tags
-            [original_indices.flatten() + 1]  # Node connectivity (1-indexed)
+            [np.array([1, 2, 3])]  # Node connectivity (1-indexed)
         )
+        mock_gmsh.model.getPhysicalGroups.return_value = []
+        mock_gmsh.model.mesh.getElementProperties.return_value = ("Triangle", 2, 1, 3)
+
+        # Mock for load_to_gmsh
+        mock_gmsh.model.addDiscreteEntity.return_value = 1
 
         try:
             # Simulate: Load mesh from GMSH
@@ -245,7 +222,7 @@ class MeshIntegrationTest(unittest.TestCase):
                 load_to_gmsh(loaded_mesh, surface_tag=1)
 
             # Test completed without exceptions
-            self.assertTrue(True)
+            assert True
 
         except Exception:
             # Expected with mocked environment
@@ -253,32 +230,31 @@ class MeshIntegrationTest(unittest.TestCase):
 
     def test_mesh_data_validation(self):
         """Test mesh data validation concepts."""
-        # Test valid mesh data
-        valid_vertices = np.array([
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0]
-        ], dtype=np.float32)
-
-        valid_indices = np.array([
-            [0, 1, 2],
-            [0, 2, 3]
-        ], dtype=np.uint32)
+        # Test valid mesh data using meshly.Mesh
+        mesh = meshly.Mesh(
+            vertices=np.array([
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0]
+            ], dtype=np.float32),
+            indices=np.array([0, 1, 2, 0, 2, 3], dtype=np.uint32),  # 2 triangles
+            index_sizes=np.array([3, 3], dtype=np.uint32),
+            cell_types=np.array([5, 5], dtype=np.uint8),  # VTK_TRIANGLE = 5
+        )
 
         # Validate shapes
-        self.assertEqual(valid_vertices.shape[0], 4)  # 4 vertices
-        self.assertEqual(valid_vertices.shape[1], 3)  # 3D coordinates
-        self.assertEqual(valid_indices.shape[0], 2)   # 2 triangles
-        self.assertEqual(valid_indices.shape[1], 3)   # 3 indices per triangle
+        assert mesh.vertex_count == 4  # 4 vertices
+        assert mesh.vertices.shape[1] == 3  # 3D coordinates
+        assert mesh.polygon_count == 2  # 2 triangles
 
         # Validate data types
-        self.assertEqual(valid_vertices.dtype, np.float32)
-        self.assertEqual(valid_indices.dtype, np.uint32)
+        assert mesh.vertices.dtype == np.float32
+        assert mesh.indices.dtype == np.uint32
 
         # Validate index bounds
-        self.assertGreaterEqual(valid_indices.min(), 0)
-        self.assertLess(valid_indices.max(), len(valid_vertices))
+        assert mesh.indices.min() >= 0
+        assert mesh.indices.max() < mesh.vertex_count
 
     def test_element_type_mapping(self):
         """Test element type mapping concepts."""
@@ -293,23 +269,15 @@ class MeshIntegrationTest(unittest.TestCase):
         }
 
         for name, type_id in element_types.items():
-            self.assertIsInstance(type_id, int)
-            self.assertGreater(type_id, 0)
+            assert isinstance(type_id, int)
+            assert type_id > 0
 
     @patch('meshql.mesh.loaders.gmsh')
     def test_mesh_error_handling(self, mock_gmsh):
         """Test mesh error handling scenarios."""
-        # Test with invalid mesh data
-        mock_mesh = Mock()
-        mock_mesh.vertices = None  # Invalid
-        mock_mesh.indices = None   # Invalid
-
-        try:
-            load_to_gmsh(mock_mesh)
-            # Should handle None values gracefully
-        except (TypeError, AttributeError, Exception):
-            # Expected behavior with invalid data
-            pass
+        # Test with non-Mesh object (should raise TypeError or AttributeError)
+        with pytest.raises((TypeError, AttributeError)):
+            load_to_gmsh("not a mesh")
 
     def test_mesh_performance_concepts(self):
         """Test mesh performance considerations."""
@@ -319,21 +287,24 @@ class MeshIntegrationTest(unittest.TestCase):
 
         # Simple triangulation (not optimal, just for testing)
         num_triangles = (num_vertices - 2) // 3
-        indices = np.zeros((num_triangles, 3), dtype=np.uint32)
+        indices = []
         for i in range(num_triangles):
-            indices[i] = [i*3, i*3+1, i*3+2]
+            indices.extend([i*3, i*3+1, i*3+2])
+
+        mesh = meshly.Mesh(
+            vertices=vertices,
+            indices=np.array(indices, dtype=np.uint32),
+            index_sizes=np.array([3] * num_triangles, dtype=np.uint32),
+            cell_types=np.array([5] * num_triangles, dtype=np.uint8),  # VTK_TRIANGLE = 5
+        )
 
         # Validate performance-related properties
-        self.assertEqual(vertices.dtype, np.float32)  # Memory efficient
-        self.assertEqual(indices.dtype, np.uint32)    # Appropriate index type
-        self.assertLess(indices.max(), num_vertices)  # Valid indices
+        assert mesh.vertices.dtype == np.float32  # Memory efficient
+        assert mesh.indices.dtype == np.uint32    # Appropriate index type
+        assert mesh.indices.max() < num_vertices  # Valid indices
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
-class LoaderRoundTripTest(unittest.TestCase):
+class TestLoaderRoundTrip:
     """Test cases for load_to_gmsh and load_from_gmsh round-trip validation."""
 
     def test_cube_mesh_roundtrip(self):
@@ -398,11 +369,8 @@ class LoaderRoundTripTest(unittest.TestCase):
             )
 
             # Compare markers
-            self.assertEqual(
-                set(original_mesh.markers.keys()),
-                set(reconstructed_mesh.markers.keys()),
+            assert set(original_mesh.markers.keys()) == set(reconstructed_mesh.markers.keys()), \
                 "Marker names do not match after round-trip"
-            )
 
             for marker_name in original_mesh.markers:
                 original_marker_indices = np.sort(

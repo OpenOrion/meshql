@@ -35,7 +35,7 @@ dependencies = [
     "scipy",
     "jupyter_cadquery @ git+https://github.com/OpenOrion/jupyter-cadquery.git",
     "plotly",
-    "meshly==1.3.5a0",
+    "meshly==1.3.8",
     ]
 
 

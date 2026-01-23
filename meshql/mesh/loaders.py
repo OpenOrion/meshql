@@ -1,3 +1,4 @@
+from typing import Optional
 from meshql.utils.types import NumpyFloat
 from .mesh import VTK_TO_GMSH_ELEMENT_TYPE, GmshElementType
 import numpy as np
@@ -113,25 +114,25 @@ def load_from_gmsh() -> meshly.Mesh:
     )
 
 
-def load_to_gmsh(mesh: meshly.Mesh, surface_tag: int = 1) -> None:
+def load_to_gmsh(mesh: meshly.Mesh, dim: Optional[int] = None, surface_tag: int = 1) -> None:
     """Import a meshly Mesh into the current gmsh model.
 
     Args:
         mesh: A meshly Mesh object to import
         surface_tag: The tag to use for the discrete entity (default: 1)
     """
-
+    dim = mesh.dim or dim or 3
     if not isinstance(mesh, meshly.Mesh):
         raise TypeError("mesh must be a meshly.Mesh object")
 
 
     # Create a discrete entity to hold the mesh (surface for 2D, volume for 3D)
-    gmsh.model.addDiscreteEntity(mesh.dim, surface_tag)
+    gmsh.model.addDiscreteEntity(dim, surface_tag)
 
     # Add nodes directly to the mesh
     node_tags = list(range(1, len(mesh.vertices) + 1))  # 1-based indexing
     gmsh.model.mesh.addNodes(
-        dim=mesh.dim,
+        dim=dim,
         tag=surface_tag,  # entity tag (must match the discrete entity)
         nodeTags=node_tags,
         # flattened array [x1,y1,z1,x2,y2,z2,...]

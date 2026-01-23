@@ -18,5 +18,7 @@
 		"ms-python.vscode-pylance",
 		"eamodio.gitlens"
 	],
+
+	"postCreateCommand": "make install",
 	"remoteUser": "vscode"
 }
