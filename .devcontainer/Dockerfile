@@ -1,5 +1,5 @@
-ARG VARIANT="3.7"
-FROM mcr.microsoft.com/vscode/devcontainers/python:0-${VARIANT}
+FROM mcr.microsoft.com/devcontainers/base:jammy
+RUN curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
 
 
 RUN apt-get update -y && \
