@@ -310,7 +310,11 @@ We welcome contributions! Please check out the [Discord](https://discord.gg/H7qR
 
 # Tutorial
 
-Video tutorial available: [https://www.youtube.com/watch?v=ltbxRsuvaLw](https://www.youtube.com/watch?v=ltbxRsuvaLw)
+Video tutorial available: 
+
+latest: [https://www.youtube.com/watch?v=7skc6wjwoTk](https://www.youtube.com/watch?v=7skc6wjwoTk)
+
+v1: [https://www.youtube.com/watch?v=ltbxRsuvaLw](https://www.youtube.com/watch?v=ltbxRsuvaLw)
 
 # License
 
