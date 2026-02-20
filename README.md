@@ -35,7 +35,7 @@ conda install -c conda-forge -c cadquery cadquery=master
 
 ## From PyPI
 ```bash
-pip install meshql
+pip install git+https://github.com/OpenOrion/meshql.git#egg=meshql
 ```
 
 ## From Source
