@@ -1,15 +1,40 @@
 ARG VARIANT="3.7"
 FROM mcr.microsoft.com/vscode/devcontainers/python:0-${VARIANT}
 
-# [Choice] Node.js version: none, lts/*, 16, 14, 12, 10
-ARG NODE_VERSION="none"
-RUN if [ "${NODE_VERSION}" != "none" ]; then su vscode -c "umask 0002 && . /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSION} 2>&1"; fi
 
 RUN apt-get update -y && \
-  apt install -y libgl1-mesa-glx libglu1-mesa libxcursor1 libxinerama1 && \
+  apt install -y libgl1-mesa-glx curl software-properties-common wget && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# [Optional] If your pip requirements rarely change, uncomment this section to add them to the image.
-COPY requirements_dev.txt /tmp/pip-tmp/
-RUN pip install -r /tmp/pip-tmp/requirements_dev.txt && rm -rf /tmp/pip-tmp
+# Determine architecture and download appropriate Miniconda installer
+USER vscode
+WORKDIR /home/vscode
+RUN ARCH=$(uname -m) && \
+  if [ "$ARCH" = "x86_64" ]; then \
+    MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-py312_24.7.1-0-Linux-x86_64.sh"; \
+  elif [ "$ARCH" = "aarch64" ]; then \
+    MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-py312_24.7.1-0-Linux-aarch64.sh"; \
+  else \
+    echo "Unsupported architecture: $ARCH"; exit 1; \
+  fi && \
+  wget $MINICONDA_URL && \
+  chmod +x $(basename $MINICONDA_URL) && \
+  ./$(basename $MINICONDA_URL) -b && \
+  rm $(basename $MINICONDA_URL)
+
+
+
+# Install Python dependencies from requirements_dev.txt if it exists
+# Initialize conda and run package installs
+RUN CONDA_PATH=/home/vscode/miniconda3/bin/conda && \
+  $CONDA_PATH init && \
+  $CONDA_PATH install -n base conda-libmamba-solver -y && \
+  $CONDA_PATH config --set solver libmamba && \
+  $CONDA_PATH install -n base -c conda-forge cadquery gmsh python-gmsh -y
+  
+RUN . /home/vscode/miniconda3/etc/profile.d/conda.sh && \
+    conda activate base && \
+    pip install ezdxf --upgrade
+
+

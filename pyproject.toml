@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meshql"
+version = "2.0.0"
+description = "query based meshing on top of GMSH"
+authors = [
+    {name = "Afshawn Lotfi", email = "afshawn@openorion.org"},
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "numpy",
+    "ipywidgets",
+    "ipython_genutils",
+    "pythreejs==2.4.2",
+    "shapely",
+    "scipy",
+    "jupyter_cadquery @ git+https://github.com/OpenOrion/jupyter-cadquery.git",
+    "plotly",
+    "meshly==1.3.8",
+    ]
+
+
+[project.optional-dependencies]
+su2 = [
+    "su2fmt>=4.0.0",
+]
+gmsh = [
+    "gmsh",
+]
+
+
+[project.urls]
+Homepage = "https://github.com/OpenOrion/meshql"
+Repository = "https://github.com/OpenOrion/meshql.git"
+"Bug Tracker" = "https://github.com/OpenOrion/meshql/issues"
+
+[tool.setuptools.packages.find]
+include = ["meshql*"]
+
+[tool.setuptools.package-data]
+meshql = ["py.typed"]

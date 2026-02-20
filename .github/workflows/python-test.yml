@@ -1,0 +1,37 @@
+name: Python Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Conda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+        channels: conda-forge,cadquery
+        channel-priority: flexible
+        activate-environment: test-env
+    
+    - name: Install dependencies
+      shell: bash -l {0}
+      run: |
+        conda install -c conda-forge gmsh python-gmsh
+        conda install -c conda-forge -c cadquery cadquery=master
+        pip install -e ".[gmsh]"
+    
+    - name: Test with unittest
+      shell: bash -l {0}
+      run: |
+        python -m unittest discover tests

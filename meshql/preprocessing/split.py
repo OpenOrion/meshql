@@ -1,159 +1,296 @@
+from functools import cached_property
 import numpy as np
 import cadquery as cq
-from cadquery.cq import VectorLike
-from typing import Literal, Optional, Sequence, Union
-from meshql.utils.cq import CQCache, CQExtensions, CQLinq
-from meshql.utils.types import LineTuple, VectorTuple
+from typing import Callable, Literal, Optional, Sequence, Union, cast
+from pydantic import ConfigDict, Field
+from meshql.preprocessing.preprocess import Preprocessor
+from meshql.core.selector import Selection
+from meshql.utils.cache import CacheService
+from meshql.utils.cq import CQUtils
+from meshql.utils.types import RegionGroupType
+from meshql.utils.cq_linq import CQLinq, SetOperation
+from meshql.utils.split import MultiFaceAxis, SnapType, SplitUtils
+from meshql.utils.types import (
+    Axis,
+    CQPlane,
+    LineTuple,
+    OrderedSet,
+    VectorSequence,
+    to_2d_array,
+    to_array,
+    to_vec,
+)
 from jupyter_cadquery import show
-Axis = Union[Literal["X", "Y", "Z"], VectorTuple, cq.Vector]
-def get_normal_from_axis(axis: Axis):
-    if isinstance(axis, str):
-        return cq.Vector([1 if axis == "X" else 0, 1 if axis == "Y" else 0, 1 if axis == "Z" else 0])        
-    elif isinstance(axis, tuple):
-        return cq.Vector(axis)
-    return axis
 
-def norm_line_tuple(line: LineTuple):
-    pnt1 = tuple(float(v) for v in ((*line[0], 0) if len(line[0]) == 2 else line[0]))
-    pnt2 = tuple(float(v) for v in ((*line[1], 0) if len(line[1]) == 2 else line[1]))
-    return (pnt1, pnt2)
 
-class Split:
-    @staticmethod
+class Split(Preprocessor):
+    pending_splits: list[list[CQPlane]] = Field(default_factory=list)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def apply(self, refresh: bool = True):
+        split_faces = [
+            split_face
+            for split_face_group in self.pending_splits
+            for split_face in split_face_group
+        ]
+
+        checksum = self.get_checksum()
+        split_workplane = CacheService.load_brep(checksum)
+        if split_workplane is None:
+            split_workplane = SplitUtils.split_workplane(
+                self.workplane, split_faces)
+            CacheService.cache_brep(checksum, split_workplane)
+
+        self.workplane = split_workplane
+        self.pending_splits = []
+        if refresh:
+            self.refresh()
+            # Use base class method for caching region groups
+            self.cache_region_groups()
+
+        return self
+
+    def push(self, split_shapes: Union[CQPlane, Sequence[CQPlane]]):
+        if not isinstance(split_shapes, list):
+            split_shapes = [split_shapes]
+        else:
+            split_shapes = list(split_shapes)
+        self.pending_splits.append(split_shapes)
+        return self
+
+    def show(self, theme: Literal["light", "dark"] = "light"):
+        all_split_faces = [
+            plane for group in self.pending_splits for plane in group
+        ]
+        show(
+            self.workplane.newObject(all_split_faces),
+            theme=theme,
+        )
+        return self
+
+    def print_val(self):
+        print(f"Workplane Val: {self.workplane.val()}")
+        return self
+
     def from_plane(
-        base_pnt: VectorLike = (0,0,0), 
-        angle: VectorTuple = (0,0,0), 
+        self,
+        base_pnt: VectorSequence = (0, 0, 0),
+        angle: VectorSequence = (0, 0, 1),
+        sizing: Literal["maxDim", "infinite"] = "maxDim",
     ):
-        return cq.Face.makePlane(None, None, base_pnt, tuple(np.radians(angle)))
+        split_face = SplitUtils.make_plane_split_face(
+            self.workplane, base_pnt, angle, sizing
+        )
+        self.push(split_face)
+        return self
 
-    @staticmethod
-    def from_faces(
-        workplane: cq.Workplane, 
-        face_type: Literal['interior', 'exterior'],
-        snap_tolerance: Optional[float] = None,
-        angle_offset: VectorTuple = (0,0,0),
+    def from_ratios(
+        self,
+        start_select: Selection,
+        end_select: Selection,
+        ratios: list[float],
+        dir: Literal["away", "towards", "both"],
+        snap: SnapType = False,
+        angle_offset: VectorSequence = (0, 0, 0),
     ):
-        offset = cq.Vector(tuple(np.radians(angle_offset)))
-        type_groups = CQLinq.groupByTypes(workplane, only_faces=True, check_splits=False)
-        if False:
-            yield None
-        dir = "away" if face_type == "interior" else "towards"
-        face_edge_groups: dict[cq.Edge, set[cq.Face]] = {}
 
-        for face in type_groups[face_type]:
-            assert isinstance(face, cq.Face)
-            edges = CQLinq.select(face, "edge")
-            for edge in edges:
-                assert isinstance(edge, cq.Edge)
-                if edge not in face_edge_groups:
-                    face_edge_groups[edge] = set()
-                face_edge_groups[edge].add(face)
+        offset = to_vec(np.radians(list(angle_offset)))
+        start_wp = start_select.select_entities(
+            self.workplane, "Edge", self.groups, "intersection")
+        start_paths = CQLinq.sortByConnect(start_wp.vals())
+        start_edges = [path.edge for path in start_paths]
 
-        for edge, faces in face_edge_groups.items():
-            average_normal = np.average([face.normalAt().toTuple() for face in faces], axis=0)
-            average_normal_vec = cq.Vector(tuple(average_normal)) + offset
-            edge_vec = cq.Vector(edge.endPoint().toTuple()) - cq.Vector(edge.startPoint().toTuple())
-            is_parallel = edge_vec.dot(average_normal_vec) == 0
-            if is_parallel:
-                yield Split.from_edge(workplane, edge, average_normal_vec, dir, snap_tolerance)
+        end_wp = end_select.select_entities(
+            self.workplane, "Edge", self.groups, "intersection")
+        end_paths = CQLinq.sortByConnect(end_wp.vals())
+        end_edges = [path.edge for path in end_paths]
 
+        assert len(start_edges) > 0, "no selection for start present"
+        assert len(end_edges) > 0, "no selection for end present"
 
-    @staticmethod
+        if len(start_edges) > 1:
+            start_cw = CQUtils.is_clockwise(start_edges[0], start_edges[1])
+            start_edges = start_edges if start_cw else reversed(start_edges)
+
+        if len(end_edges) > 1:
+            end_cw = CQUtils.is_clockwise(end_edges[0], end_edges[1])
+            end_edges = end_edges if end_cw else reversed(end_edges)
+
+        start_wire = cq.Wire.assembleEdges(start_edges)
+        end_wire = cq.Wire.assembleEdges(end_edges)
+
+        for ratio in ratios:
+            start_point = start_wire.positionAt(ratio)
+            end_point = end_wire.positionAt(
+                0.5 - ratio if ratio <= 0.5 else 1.5 - ratio
+            )
+            edge = cq.Edge.makeLine(start_point, end_point)
+
+            if (
+                start_select.type
+                and start_select.type == end_select.type
+                and self.groups
+            ):
+                target = self.workplane.newObject(
+                    list(self.groups[start_select.type]))
+            else:
+                target = self.workplane
+
+            nearest_face = cast(
+                cq.Face, CQLinq.find_nearest(target, edge, shape_type="Face")
+            )
+            normal_vec = (
+                CQUtils.normalize(nearest_face.normalAt(
+                    (start_point + end_point) / 2))
+                + offset
+            )
+            projected_edge = edge.project(nearest_face, normal_vec).Edges()[0]
+            assert isinstance(
+                projected_edge, cq.Edge), "Projected edge is single edge"
+            self.from_edge(projected_edge, normal_vec, dir, snap)
+
+        return self
+
+    def group(self, on_split: Callable[["Split"], "Split"]):
+        result = on_split(self)
+        # After nested splits, refresh region_groups to include ALL faces (old + new)
+        # This forces recomputation of region types for the entire updated geometry
+        result.refresh()
+        # Use base class method for caching region groups
+        result.cache_region_groups()
+        return result
+
+    def from_normals(
+        self,
+        selection: Optional[Selection] = None,
+        dir: Optional[Literal["away", "towards", "both"]] = None,
+        axis: Union[MultiFaceAxis, list[MultiFaceAxis]] = "avg",
+        snap: SnapType = False,
+        angle_offset: VectorSequence = (0, 0, 0),
+    ):
+        if selection:
+
+            selected_wp = selection.select_entities(
+                self.workplane, "Edge", self.groups, "difference")
+            filtered_edges = selected_wp.vals()
+        else:
+            filtered_edges = self.workplane.edges().vals()
+
+        offset = to_vec(np.radians(list(angle_offset)))
+        assert len(filtered_edges) > 0, "No edges found for selection"
+
+        split_faces = list[cq.Shape]()
+        snap_edges = OrderedSet[cq.Edge]()
+        for edge in filtered_edges:
+            faces = self.face_edge_groups[edge]
+            split_face = None
+            for _axis in axis if isinstance(axis, list) else [axis]:
+                if not isinstance(_axis, str) and dir is None:
+                    dir = "towards"
+                else:
+                    dir = (
+                        dir or "away"
+                        if selection and selection.type == "interior"
+                        else "towards"
+                    )
+
+                normal_vec = CQUtils.get_normal_vec(
+                    faces, cast(Axis, _axis), offset)
+                curr_split_face = SplitUtils.make_edge_split_face(
+                    self.workplane, edge, normal_vec, dir, snap, snap_edges
+                )
+                if split_face is None:
+                    # split_face = curr_split_face
+                    split_faces.append(curr_split_face)
+                else:
+                    # split_face = split_face.fuse(curr_split_face)
+                    split_faces.append(split_face)
+                    split_faces.append(curr_split_face)
+
+        self.push(split_faces)
+        return self
+
     def from_anchor(
-        workplane: cq.Workplane, 
-        anchor: Union[list[VectorTuple], VectorTuple] = (0,0,0), 
-        angle: Union[list[VectorTuple], VectorTuple] = (0,0,0),
+        self,
+        anchor: Union[list[VectorSequence], VectorSequence] = (0, 0, 0),
+        angle: Union[list[VectorSequence], VectorSequence] = (0, 0, 0),
         snap_tolerance: Optional[float] = None,
         until: Literal["next", "all"] = "next",
     ):
         anchors = [anchor] if isinstance(anchor, tuple) else anchor
         angles = [angle] if isinstance(angle, tuple) else angle
-        assert len(anchors) == len(angles), "anchors and dirs must be the same length"
+        assert len(anchors) == len(
+            angles), "anchors and dirs must be the same length"
 
         edges = []
         for anchor, angle in zip(anchors, angles):
-            split_face = Split.from_plane(anchor, angle)
+            split_face = SplitUtils.make_plane_split_face(
+                self.workplane, anchor, angle
+            )
             if until == "next":
-                intersect_vertex = CQExtensions.split_intersect(workplane, anchor, split_face, snap_tolerance)
-                edges.append((anchor, intersect_vertex.toTuple())) # type: ignore
+                intersected_vertices = (
+                    self.workplane.intersect(cq.Workplane(split_face))
+                    .vertices()
+                    .vals()
+                )
+                intersect_vertex = CQLinq.find_nearest(
+                    intersected_vertices, to_vec(anchor), snap_tolerance
+                )
+                assert intersect_vertex, "No intersecting vertex found"
+                edges.append((anchor, intersect_vertex.Center().toTuple()))
             else:
                 edges.append(split_face)
-        return Split.from_lines(workplane, edges)
-    
-    @staticmethod
-    def from_pnts(pnts: Sequence[VectorLike]):
-        return cq.Face.makeFromWires(cq.Wire.makePolygon(pnts))
+        self.from_lines(edges)
+        return self
 
-    @staticmethod
+    def from_pnts(self, pnts: Sequence[VectorSequence]):
+        pnt_vecs = [to_vec(pnt) for pnt in pnts]
+        split_face = cq.Face.makeFromWires(cq.Wire.makePolygon(pnt_vecs))
+        self.push(split_face)
+        return self
+
     def from_edge(
-        workplane: cq.Workplane,
-        edge: cq.Edge, 
-        axis: Union[Literal["X", "Y", "Z"], VectorTuple, cq.Vector] = "Z",
+        self,
+        edge: cq.Edge,
+        axis: Axis = "Z",
         dir: Literal["away", "towards", "both"] = "both",
-        snap_tolerance: Optional[float] = None,
+        snap: SnapType = False,
     ):
-        scaled_edge = CQExtensions.scale(edge, z=10)
-        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * 10.0
-        normal_vector = get_normal_from_axis(axis)        
+        split_face = SplitUtils.make_edge_split_face(
+            self.workplane, edge, axis, dir, snap
+        )
+        self.push(split_face)
+        return self
 
-        max_dim_edge = scaled_edge.translate(normal_vector * maxDim) if dir in ("both", "towards") else scaled_edge
-        min_dim_edge = scaled_edge.translate(-normal_vector * maxDim) if dir in ("both", "away") else scaled_edge
-
-        
-        split_face = cq.Face.makeFromWires(cq.Wire.assembleEdges([
-            min_dim_edge,
-            cq.Edge.makeLine(min_dim_edge.endPoint(), max_dim_edge.endPoint()),
-            max_dim_edge,
-            cq.Edge.makeLine(max_dim_edge.startPoint(), min_dim_edge.startPoint()),
-        ]))
-
-        # TODO: for some reason this snap tolerance is not working
-        if snap_tolerance:
-            intersect_vertex = CQExtensions.split_intersect(workplane, edge.startPoint(), split_face, snap_tolerance)
-            assert intersect_vertex, "No intersection found"
-            intersect_vec = cq.Vector(intersect_vertex.toTuple()) - cq.Vector(edge.startPoint().toTuple())
-            intersect_vec_norm = intersect_vec/intersect_vec.Length
-            return Split.from_edge(workplane, edge, intersect_vec_norm, "towards")
-        return split_face
-
-    @staticmethod
     def from_lines(
-        workplane: cq.Workplane, 
-        lines: Union[list[LineTuple], LineTuple], 
-        axis: Union[Literal["X", "Y", "Z"], VectorTuple] = "Z",
+        self,
+        lines: Union[list[LineTuple], LineTuple],
+        axis: Axis = "Z",
         dir: Literal["away", "towards", "both"] = "both",
     ):
-        if isinstance(lines, tuple):
-            edges_pnts = np.array([norm_line_tuple(lines), norm_line_tuple(lines)])
-        elif isinstance(lines, list) and len(lines) == 1:
-            edges_pnts = np.array([norm_line_tuple(lines[0]), norm_line_tuple(lines[0])])
+        max_dim = self.workplane.findSolid().BoundingBox().DiagonalLength * 10
 
-        else: 
-            edges_pnts = [norm_line_tuple(line) for line in lines]
-        maxDim = workplane.findSolid().BoundingBox().DiagonalLength * 10.0
-        normal_vector = np.array(get_normal_from_axis(axis).toTuple())
+        if isinstance(lines, tuple):
+            edges_pnts = np.array(
+                [to_2d_array(lines), to_2d_array(lines)], dtype=np.float64
+            )
+        elif isinstance(lines, list) and len(lines) == 1:
+            edges_pnts = np.array(
+                [to_2d_array(lines[0]), to_2d_array(lines[0])], dtype=np.float64
+            )
+        else:
+            edges_pnts = np.array(
+                [to_2d_array(line) for line in lines], dtype=np.float64
+            )
+        normal_vector = to_array(CQUtils.normalize(to_vec(axis)))
 
         if dir in ("both", "towards"):
-            edges_pnts[0] += maxDim * normal_vector
-        if dir in ("both", "away"):        
-            edges_pnts[-1] -= maxDim * normal_vector
+            edges_pnts[0] += max_dim * normal_vector
+        if dir in ("both", "away"):
+            edges_pnts[-1] -= max_dim * normal_vector
 
         side1 = edges_pnts[:, 0].tolist()
         side2 = edges_pnts[:, 1].tolist()
-        wire_pnts = [side1[0], *side2, *side1[1:][::-1]] 
-        return Split.from_pnts(wire_pnts)
-
-
-def split_workplane(workplane: cq.Workplane, splits: Sequence[cq.Face], use_cache: bool = True):
-    shape_combo = [*workplane.vals(), *splits]
-    cache_exists = CQCache.get_cache_exists(shape_combo) if use_cache else False
-    cache_file_name = CQCache.get_file_name(shape_combo) if use_cache else ""
-    if use_cache and cache_exists:
-        shape = CQCache.import_brep(cache_file_name)
-    else:
-        for split in splits:      
-            workplane = workplane.split(split)
-        shape = CQExtensions.fuse_shapes(workplane.vals())
-        if use_cache:
-            CQCache.export_brep(shape, cache_file_name)
-    return cq.Workplane(shape)
+        wire_pnts = [side1[0], *side2, *side1[1:][::-1]]
+        self.from_pnts(wire_pnts)
+        return self
