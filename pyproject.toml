@@ -41,7 +41,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.2",
-    "jupyter_cadquery @ git+https://github.com/OpenOrion/jupyter-cadquery.git",
 ]
 
 su2 = [
