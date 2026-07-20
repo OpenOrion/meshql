@@ -1,0 +1,61 @@
+# Use Miniconda as the base image
+FROM docker.io/continuumio/miniconda3:latest
+
+# Set working directory
+WORKDIR /workspace
+
+# Install system dependencies for OpenGL, CAD rendering, git, and build tools
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglx-mesa0 \
+    libegl1 \
+    libglib2.0-0 \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 1. Install Python 3.11, CadQuery 2.4.0, GMSH, and force NumPy 1.x (<2.0)
+RUN conda install -y -c conda-forge \
+    python=3.11 \
+    "numpy<2.0" \
+    gmsh \
+    python-gmsh \
+    cadquery=2.4.0 \
+    jupyterlab \
+    ipykernel && \
+    conda clean -afy
+
+# 2. Pre-install MeshQL's dependencies while strictly preserving numpy<2.0
+RUN pip install --no-cache-dir \
+    "numpy<2.0" \
+    "ipywidgets>=7.8.5" \
+    "pythreejs==2.4.2" \
+    "shapely>=2.1.2" \
+    "scipy>=1.11.0" \
+    "plotly>=5.0.0" \
+    "meshly==1.3.8" \
+    "jupyter_cadquery>=4.0.2" \
+    "pydantic>=2.0.0" \
+    "su2fmt>=4.0.0"
+
+# 3. Install MeshQL with --no-deps so pip cannot overwrite numpy<2.0
+RUN pip install --no-cache-dir --no-deps "meshql[gmsh] @ git+https://github.com/OpenOrion/meshql.git"
+
+# 4. Polyfill ALL removed NumPy 1.x aliases AND patch missing cq.importers.importBrep
+RUN SITE_PKG=$(python -c "import site; print(site.getsitepackages()[0])") && \
+    echo "import numpy as np" > $SITE_PKG/sitecustomize.py && \
+    echo "import cadquery as cq" >> $SITE_PKG/sitecustomize.py && \
+    echo "import cadquery.occ_impl.importers as cq_importers" >> $SITE_PKG/sitecustomize.py && \
+    echo "legacy_aliases = {'bool8': np.bool_, 'int0': np.intp, 'uint0': np.uintp, 'object0': np.object_, 'str0': np.str_, 'bytes0': np.bytes_, 'void0': np.void}" >> $SITE_PKG/sitecustomize.py && \
+    echo "for attr, target in legacy_aliases.items():" >> $SITE_PKG/sitecustomize.py && \
+    echo "    if not hasattr(np, attr): setattr(np, attr, target)" >> $SITE_PKG/sitecustomize.py && \
+    echo "if not hasattr(cq_importers, 'importBrep'):" >> $SITE_PKG/sitecustomize.py && \
+    echo "    def _import_brep(f): return cq.Workplane(cq.Shape.importBrep(f))" >> $SITE_PKG/sitecustomize.py && \
+    echo "    cq_importers.importBrep = _import_brep" >> $SITE_PKG/sitecustomize.py && \
+    echo "    cq.importers.importBrep = _import_brep" >> $SITE_PKG/sitecustomize.py
+
+# Expose Jupyter port
+EXPOSE 8888
+
+# Start JupyterLab on container startup
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=meshql", "--NotebookApp.password="]
