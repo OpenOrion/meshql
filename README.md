@@ -50,6 +50,13 @@ cd meshql
 pip install -e ".[gmsh]"
 ```
 
+## Development
+
+This repo includes a [Dev Container](.devcontainer) config. Install the
+[Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+in VS Code, then run **Dev Containers: Reopen in Container**. Everything —
+including Jupyter notebooks within VS Code when opening ipynb files should work out of the box.
+
 # Quick Start
 
 ## Basic Example: NACA Airfoil with Boundary Layer
